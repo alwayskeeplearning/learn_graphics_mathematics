@@ -4,10 +4,7 @@ import { isProd, polyfill, resolve } from './helper.mjs';
 
 const base = defineConfig({
   target: 'web',
-  output: {
-    publicPath: '/federation_provider/',
-    // publicPath: 'auto',
-  },
+  output: {},
   resolve: {
     alias: {
       '@': resolve('./src'),
@@ -59,22 +56,7 @@ const base = defineConfig({
       },
     ],
   },
-  plugins: [
-    new ModuleFederationPlugin({
-      name: 'federation_provider',
-      filename: 'remoteEntry.js',
-      exposes: {
-        './button': resolve('./src/button/index.jsx'),
-        './mf': resolve('./src/mf.js'),
-      },
-      shared: {
-        react: { singleton: true, requiredVersion: '^18.0.0' },
-        'react-dom': { singleton: true, requiredVersion: '^18.0.0' },
-      },
-      dts: false,
-      // getPublicPath: `return "//" + window.location.host + "/federation_provider"`,
-    }),
-  ],
+  plugins: [],
 });
 
 export default base;

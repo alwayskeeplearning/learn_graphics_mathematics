@@ -3,15 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Demo-01: GPU 加速的DICOM渲染</title>
+    <title>demo-01: 绘制DICOM影像</title>
     <style>
       body {
         font-family: sans-serif;
         padding: 20px;
         background-color: #f0f2f5;
         color: #333;
-        margin: 0; /* 移除默认边距 */
-        overflow: hidden; /* 隐藏滚动条 */
       }
       #dicom-viewer {
         display: flex;
@@ -31,31 +29,26 @@
       strong {
         color: #005a9c;
       }
-      /* 让canvas容器占据剩余空间 */
-      #canvas-container {
-        flex-grow: 1;
-        height: calc(100vh - 40px); /* 视窗高度减去padding */
-        display: flex;
-        justify-content: center;
-        align-items: center;
+      canvas {
+        border: 1px solid #ccc;
         background-color: black;
-      }
-      /* Three.js会创建自己的canvas，我们只需要一个容器 */
-      #canvas-container canvas {
-        max-width: 100%;
-        max-height: 100%;
       }
     </style>
   </head>
   <body>
+    <h1>第三步：绘制DICOM影像</h1>
     <div id="dicom-viewer">
       <div id="controls">
-        <h1>GPU 加速渲染</h1>
         <input type="file" id="dicom-file-input" accept=".dcm" />
         <div id="dicom-metadata" style="margin-top: 20px">请选择一个 .dcm 文件</div>
       </div>
-      <!-- 我们不再直接写canvas，而是提供一个容器 -->
-      <div id="canvas-container"></div>
+      <div id="canvas-container">
+        <!-- 这是我们的画板 -->
+        <canvas id="dicom-canvas"></canvas>
+      </div>
     </div>
+
+    <!-- ES Module方式引入JS -->
+    <script type="module" src="./index.js"></script>
   </body>
 </html>
