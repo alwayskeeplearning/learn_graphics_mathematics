@@ -1,0 +1,18 @@
+{
+  "path-intellisense.mappings": {
+    "@": "${workspaceFolder}/src"
+  },
+  "json.schemas": [
+    {
+      "fileMatch": ["package.json"],
+      "url": "./node_modules/@npmcli/package-json/lib/schema.json"
+    }
+  ],
+  "files.autoSaveDelay": 2000,
+  "editor.tabSize": 2,
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  }
+}

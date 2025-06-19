@@ -1,0 +1,95 @@
+@base-font-size: 14px;
+@viewport-width: 1024px;
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #171d2e;
+  color: #e5e5e5;
+  overflow: hidden;
+  font-size: @base-font-size;
+}
+ul,
+li,
+p {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  background-color: #171d2e;
+  overflow-y: auto;
+  // 防止viewport大小改变展示出原本背景颜色
+  .evo-layout_view {
+    background-color: #000;
+    overflow: hidden;
+  }
+  &::-webkit-scrollbar {
+    display: block;
+    // height: 10px;
+    width: 5px;
+    height: 5px;
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: 5px;
+    background: #465481;
+  }
+  &::-webkit-scrollbar-track {
+    border-radius: 5px;
+    background: #000;
+  }
+}
+
+#wrapper {
+  width: @viewport-width;
+  height: @viewport-width;
+  // min-width: @viewport-width;
+  // min-height: @viewport-width;
+}
+
+.container {
+  display: flex;
+  .settings {
+    margin-left: 10px;
+    display: flex;
+    flex-direction: column;
+    min-width: 420px;
+    height: 100%;
+    overflow-y: auto;
+    .ant-row {
+      margin: 6px 0;
+    }
+    .ant-space-item {
+      color: #ffffff;
+      font-size: @base-font-size;
+      margin: 5px 0px;
+      &.mr5 {
+        margin-right: 5px;
+      }
+    }
+    .ant-checkbox-wrapper {
+      color: #ffffff;
+    }
+    .ant-radio-wrapper {
+      color: #ffffff;
+      font-size: @base-font-size;
+    }
+    .ant-select-selection-item {
+      font-size: @base-font-size;
+    }
+    .ant-row {
+      color: #ffffff;
+      font-size: @base-font-size;
+    }
+  }
+}
+
+.ant-select-item-option-content {
+  font-size: @base-font-size;
+}
