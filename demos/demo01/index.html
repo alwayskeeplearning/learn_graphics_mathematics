@@ -1,60 +1,94 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Demo-01: GPU 加速的DICOM渲染</title>
+    <title>Demo-01: 可切换渲染器架构</title>
     <style>
       body {
-        font-family: sans-serif;
-        padding: 20px;
-        background-color: #f0f2f5;
-        color: #333;
-        margin: 0; /* 移除默认边距 */
-        overflow: hidden; /* 隐藏滚动条 */
-      }
-      #dicom-viewer {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
         display: flex;
-        gap: 20px;
+        margin: 0;
+        height: 100vh;
+        overflow: hidden;
+        background-color: #f0f2f5;
       }
-      #controls,
-      #canvas-container {
-        padding: 15px;
-        background-color: white;
-        border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      #sidebar {
+        width: 300px;
+        padding: 20px;
+        box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+        z-index: 10;
+        background-color: #fff;
+        overflow-y: auto;
       }
-      #dicom-metadata {
-        font-family: monospace;
-        white-space: pre-wrap;
-      }
-      strong {
-        color: #005a9c;
-      }
-      /* 让canvas容器占据剩余空间 */
-      #canvas-container {
+      #main-content {
         flex-grow: 1;
-        height: calc(100vh - 40px); /* 视窗高度减去padding */
         display: flex;
         justify-content: center;
         align-items: center;
-        background-color: black;
       }
-      /* Three.js会创建自己的canvas，我们只需要一个容器 */
-      #canvas-container canvas {
-        max-width: 100%;
-        max-height: 100%;
+      #canvas-container {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background-color: #000;
+      }
+      .control-group {
+        margin-bottom: 24px;
+      }
+      h1,
+      h2 {
+        border-bottom: 1px solid #eee;
+        padding-bottom: 10px;
+        margin-top: 0;
+      }
+      #dicom-metadata {
+        font-family: monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 4px;
       }
     </style>
   </head>
   <body>
-    <div id="dicom-viewer">
-      <div id="controls">
-        <h1>GPU 加速渲染</h1>
-        <input type="file" id="dicom-file-input" accept=".dcm" />
-        <div id="dicom-metadata" style="margin-top: 20px">请选择一个 .dcm 文件</div>
+    <div id="sidebar">
+      <h1>控制面板</h1>
+
+      <div class="control-group">
+        <h2>1. 加载文件</h2>
+        <input type="file" id="file-input" accept=".dcm" />
       </div>
-      <!-- 我们不再直接写canvas，而是提供一个容器 -->
+
+      <div class="control-group">
+        <h2>2. 选择渲染器</h2>
+        <label>
+          <input type="radio" name="renderer-type" value="webgl" checked />
+          GPU 渲染 (WebGL)
+        </label>
+        <br />
+        <label>
+          <input type="radio" name="renderer-type" value="canvas2d" />
+          CPU 渲染 (Canvas 2D)
+        </label>
+      </div>
+
+      <div class="control-group">
+        <h2>3. 帧率控制 (仅GPU)</h2>
+        <label for="fps-input">目标FPS: </label>
+        <input type="number" id="fps-input" value="30" min="0" max="60" step="1" style="width: 60px" />
+      </div>
+
+      <div class="control-group">
+        <h2>4. 图像信息</h2>
+        <div id="dicom-metadata">请先加载一个DICOM文件。</div>
+      </div>
+    </div>
+
+    <div id="main-content">
       <div id="canvas-container"></div>
     </div>
   </body>
