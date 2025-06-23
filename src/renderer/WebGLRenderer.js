@@ -23,7 +23,7 @@ export default class WebGLRenderer extends IRenderer {
     // -- 状态与资源管理 --
     /** @private */ this.mesh = null; // 用于显示图像的平面网格
     /** @private */ this.material = null; // 应用于网格的自定义着色器材质
-    /** @private */ this.texture = null; // 存储DICOM像素数据的GPU纹理
+    /** @private */ this.texture = null; // [改造] 现在是THREE.Data3DTexture
 
     // -- 按需渲染的状态标志 --
     /**
@@ -51,93 +51,92 @@ export default class WebGLRenderer extends IRenderer {
   }
 
   /**
-   * [核心改造]
-   * 该方法现在是上层应用与渲染器交互的主要入口。
-   * 它负责更新数据，并将场景标记为"脏"，然后请求一次渲染。
-   * @override
-   * @param {object | null} dicomData - 若要加载新图像，则提供{dataSet, arrayBuffer}；若只更新视图，则为null。
-   * @param {object} viewState - 包含{windowCenter, windowWidth}的对象。
+   * @description [核心改造] 新的数据入口。接收整个序列数据，创建3D纹理。
+   * @param {object} series - 包含{slices, width, height, depth}的对象
    */
-  render(dicomData, viewState) {
-    // 如果传入了新的DICOM数据，则需要全量更新GPU资源
-    if (dicomData?.dataSet) {
-      this._updateGPUResources(dicomData, viewState);
+  setVolume(series) {
+    const { slices, width, height, depth } = series;
+
+    // 1. 堆叠像素数据
+    // 创建一个能容纳所有切片数据的巨大Float32Array
+    const volumeData = new Float32Array(width * height * depth);
+    for (let i = 0; i < depth; i++) {
+      const slice = slices[i];
+      const dataSet = slice.dataSet;
+
+      // 解析出当前切片的像素数据 (同之前逻辑)
+      const pixelRepresentation = dataSet.uint16('x00280103');
+      const isSigned = pixelRepresentation === 1;
+      const bitsAllocated = dataSet.uint16('x00280100');
+      let pixelDataRaw;
+      if (bitsAllocated === 16) {
+        pixelDataRaw = new (isSigned ? Int16Array : Uint16Array)(slice.arrayBuffer, dataSet.elements.x7fe00010.dataOffset, dataSet.elements.x7fe00010.length / 2);
+      } else if (bitsAllocated === 8) {
+        pixelDataRaw = new (isSigned ? Int8Array : Uint8Array)(slice.arrayBuffer, dataSet.elements.x7fe00010.dataOffset, dataSet.elements.x7fe00010.length);
+      } else {
+        throw new Error(`不支持的位深 (Bits Allocated): ${bitsAllocated}`);
+      }
+
+      // 将当前切片数据拷贝到巨大数组的正确位置
+      volumeData.set(pixelDataRaw, i * width * height);
     }
 
-    // 无论如何，都根据最新的viewState更新uniforms
-    if (this.material) {
-      this.material.uniforms.u_windowCenter.value = viewState.windowCenter;
-      this.material.uniforms.u_windowWidth.value = viewState.windowWidth;
+    // 2. 创建3D纹理
+    if (this.texture) this.texture.dispose();
+    this.texture = new THREE.Data3DTexture(volumeData, width, height, depth);
+    this.texture.format = THREE.RedFormat;
+    this.texture.type = THREE.FloatType;
+    this.texture.magFilter = THREE.LinearFilter;
+    this.texture.minFilter = THREE.LinearFilter;
+    this.texture.needsUpdate = true;
+
+    // 3. 创建材质和网格
+    if (!this.material) {
+      this.material = this._createMaterial();
+    }
+    this.material.uniforms.u_volume.value = this.texture;
+
+    // 从第一张切片获取色彩映射参数
+    const firstSliceDataSet = slices[0].dataSet;
+    this.material.uniforms.u_rescaleSlope.value = firstSliceDataSet.floatString('x00281053') || 1;
+    this.material.uniforms.u_rescaleIntercept.value = firstSliceDataSet.floatString('x00281052') || 0;
+
+    if (!this.mesh) {
+      const geometry = new THREE.PlaneGeometry(width, height);
+      this.mesh = new THREE.Mesh(geometry, this.material);
+      this.scene.add(this.mesh);
+    } else {
+      // 如果尺寸变化，重建几何体
+      const oldGeometry = this.mesh.geometry;
+      if (oldGeometry.parameters.width !== width || oldGeometry.parameters.height !== height) {
+        oldGeometry.dispose();
+        this.mesh.geometry = new THREE.PlaneGeometry(width, height);
+      }
     }
 
-    // 将场景标记为"脏"，并请求在下一帧进行渲染
+    this.updateCamera(width, height);
     this._invalidate();
   }
 
   /**
-   * [核心改造]
-   * @private
-   * 负责处理加载新图像时的GPU资源创建与更新。
-   * @param {object} dicomData
-   * @param {object} viewState
+   * @description [核心改造] 渲染指定状态的视图。
+   * 它现在只更新uniforms，不处理数据加载。
+   * @override
+   * @param {object} viewState - 包含{windowCenter, windowWidth, sliceIndex}的对象。
    */
-  // eslint-disable-next-line no-unused-vars
-  _updateGPUResources(dicomData, viewState) {
-    const { dataSet, arrayBuffer } = dicomData;
-    const rows = dataSet.uint16('x00280010');
-    const columns = dataSet.uint16('x00280011');
-    const rescaleSlope = dataSet.floatString('x00281053') || 1;
-    const rescaleIntercept = dataSet.floatString('x00281052') || 0;
+  render(viewState) {
+    if (!this.material || !this.texture) return;
 
-    // --- [核心修正] 判断数据符号类型，并更新材质定义 ---
-    const pixelRepresentation = dataSet.uint16('x00280103');
-    const isSigned = pixelRepresentation === 1;
+    // 更新窗宽窗位
+    this.material.uniforms.u_windowCenter.value = viewState.windowCenter;
+    this.material.uniforms.u_windowWidth.value = viewState.windowWidth;
 
-    if (!this.material) {
-      this.material = this._createMaterial();
-    }
-    // 更新材质的defines，这会告诉Three.js在下次使用前需要重新编译shader
-    if (this.material.defines.IS_SIGNED !== isSigned) {
-      this.material.defines.IS_SIGNED = isSigned;
-      this.material.needsUpdate = true; // 关键！强制重新编译着色器
-    }
+    // 更新当前切片索引
+    const depth = this.texture.image.depth;
+    // 将切片索引归一化到[0, 1]范围，并偏移半个像素以精确采样中心
+    this.material.uniforms.u_slice_z.value = (viewState.sliceIndex + 0.5) / depth;
 
-    // ... (更新uniforms) ...
-    this.material.uniforms.u_rescaleSlope.value = rescaleSlope;
-    this.material.uniforms.u_rescaleIntercept.value = rescaleIntercept;
-
-    // --- 纹理销毁并重建 ---
-    if (this.texture) this.texture.dispose();
-    const bitsAllocated = dataSet.uint16('x00280100');
-    // (这里的逻辑现在只关注位深，因为符号由上面的isSigned决定)
-    let pixelData, textureType;
-    if (bitsAllocated === 16) {
-      textureType = isSigned ? THREE.ShortType : THREE.UnsignedShortType;
-      pixelData = new (isSigned ? Int16Array : Uint16Array)(arrayBuffer, dataSet.elements.x7fe00010.dataOffset, dataSet.elements.x7fe00010.length / 2);
-    } else if (bitsAllocated === 8) {
-      textureType = isSigned ? THREE.ByteType : THREE.UnsignedByteType;
-      pixelData = new (isSigned ? Int8Array : Uint8Array)(arrayBuffer, dataSet.elements.x7fe00010.dataOffset, dataSet.elements.x7fe00010.length);
-    } else {
-      throw new Error(`不支持的位深 (Bits Allocated): ${bitsAllocated}`);
-    }
-    this.texture = new THREE.DataTexture(pixelData, columns, rows, THREE.RedIntegerFormat, textureType);
-    this.texture.needsUpdate = true;
-    this.material.uniforms.u_texture.value = this.texture;
-
-    // 网格和几何体复用/创建
-    if (!this.mesh) {
-      const geometry = new THREE.PlaneGeometry(columns, rows);
-      this.mesh = new THREE.Mesh(geometry, this.material);
-      this.scene.add(this.mesh);
-    } else {
-      const oldGeometry = this.mesh.geometry;
-      if (oldGeometry.parameters.width !== columns || oldGeometry.parameters.height !== rows) {
-        oldGeometry.dispose();
-        this.mesh.geometry = new THREE.PlaneGeometry(columns, rows);
-      }
-    }
-
-    this.updateCamera(columns, rows);
+    this._invalidate();
   }
 
   /**
@@ -195,12 +194,9 @@ export default class WebGLRenderer extends IRenderer {
   _createMaterial() {
     return new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
-      // --- [核心修正] 初始化defines ---
-      defines: {
-        IS_SIGNED: true, // 默认是有符号，后续会动态更新
-      },
       uniforms: {
-        u_texture: { value: null },
+        u_volume: { value: null }, // [改造] u_texture -> u_volume
+        u_slice_z: { value: 0.5 }, // [新增] 控制切片深度
         u_windowCenter: { value: 0.0 },
         u_windowWidth: { value: 0.0 },
         u_rescaleSlope: { value: 1.0 },
@@ -215,15 +211,12 @@ export default class WebGLRenderer extends IRenderer {
       `,
       fragmentShader: `
         precision highp float;
+        precision highp sampler3D; // [新增] 为3D采样器声明精度
         
-        // --- [核心修正] 使用条件编译选择采样器类型 ---
-        #ifdef IS_SIGNED
-          precision highp isampler2D;
-          uniform isampler2D u_texture;
-        #else
-          precision highp usampler2D;
-          uniform usampler2D u_texture;
-        #endif
+        // [改造] 使用3D采样器
+        uniform sampler3D u_volume;
+        // [新增] 接收切片深度
+        uniform float u_slice_z;
 
         in vec2 vUv;
         out vec4 out_FragColor;
@@ -234,12 +227,11 @@ export default class WebGLRenderer extends IRenderer {
         uniform float u_rescaleIntercept;
 
         void main() {
-          // --- 核心修正 ---
-          // 我们翻转传入的vUv.y坐标，以匹配WebGL的纹理坐标系
+          // 我们翻转传入的vUv.y坐标
           vec2 flippedUv = vec2(vUv.x, 1.0 - vUv.y);
           
-          // 使用翻转后的UV坐标进行纹理采样
-          float storedValue = float(texture(u_texture, flippedUv).r);
+          // [核心改造] 使用三维坐标进行纹理采样
+          float storedValue = texture(u_volume, vec3(flippedUv, u_slice_z)).r;
           
           // (后续的窗宽窗位计算逻辑完全不变)
           float huValue = storedValue * u_rescaleSlope + u_rescaleIntercept;

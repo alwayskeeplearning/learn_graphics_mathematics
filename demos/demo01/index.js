@@ -196,3 +196,14 @@ function main() {
 }
 
 main();
+
+// // 假设你已经有了three.js的renderer
+// const gl = renderer.getContext();
+
+// // 查询3D纹理三个维度的最大尺寸
+// const max3DTextureSize = gl.getParameter(gl.MAX_3D_TEXTURE_SIZE);
+// console.log(`3D纹理最大尺寸: ${max3DTextureSize}x${max3DTextureSize}x${max3DTextureSize}`);
+
+// // 查询单个着色器程序可以使用的最大纹理单元数量
+// const maxTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
+// console.log(`片段着色器可用纹理单元: ${maxTextureUnits}`);
