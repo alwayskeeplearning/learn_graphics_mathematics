@@ -1,5 +1,4 @@
 import dicomParser from 'dicom-parser';
-import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import WebGLRenderer from '../../src/renderer/WebGLRenderer.js';
 // Canvas2DRenderer暂时不用，先注释掉

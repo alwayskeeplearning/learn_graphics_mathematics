@@ -35,14 +35,7 @@
       "eslint --cache --fix",
       "prettier --write"
     ],
-    "demos/**/*.js": [
-      "eslint --cache --fix",
-      "prettier --write"
-    ],
     "src/**/*.{css,less}": [
-      "prettier --write"
-    ],
-    "demos/**/*.{css,less}": [
       "prettier --write"
     ]
   },
