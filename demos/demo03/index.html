@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Demo-03: 三维体渲染 (Volume Rendering)</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+        display: flex;
+        margin: 0;
+        height: 100vh;
+        overflow: hidden;
+        background-color: #f0f2f5;
+      }
+      #sidebar {
+        width: 320px; /* 稍微增加宽度以容纳新控件 */
+        padding: 20px;
+        box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+        z-index: 10;
+        background-color: #fff;
+        overflow-y: auto;
+      }
+      #main-content {
+        flex-grow: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      #canvas-container {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background-color: #000;
+        cursor: grab;
+      }
+      #canvas-container:active {
+        cursor: grabbing;
+      }
+      .control-group {
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid #eee;
+      }
+      .control-group:last-child {
+        border-bottom: none;
+      }
+      h1,
+      h2 {
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 8px;
+        margin-top: 0;
+        margin-bottom: 16px;
+      }
+      .tool-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .preset-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .preset-buttons button {
+        font-size: 0.85em;
+        padding: 6px 12px;
+        background-color: #28a745;
+      }
+      .preset-buttons button:hover {
+        background-color: #218838;
+      }
+      #status-text {
+        font-style: italic;
+        color: #666;
+        margin-top: 10px;
+      }
+      #slice-info {
+        font-weight: bold;
+        font-size: 1.1em;
+        color: #333;
+        margin-bottom: 8px;
+      }
+      #window-info {
+        font-family: monospace;
+        font-size: 0.95em;
+        color: #007bff;
+        background-color: #f8f9fa;
+        padding: 8px;
+        border-radius: 4px;
+        margin-bottom: 8px;
+      }
+      #dicom-metadata {
+        font-family: monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 4px;
+        margin-top: 8px;
+      }
+      button {
+        padding: 8px 16px;
+        font-size: 1em;
+        border: none;
+        background-color: #007bff;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        margin-right: 8px;
+        margin-bottom: 8px;
+      }
+      button:hover {
+        background-color: #0056b3;
+      }
+      button.active-tool {
+        background-color: #004494;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+      }
+      /* 新增：滑动条样式 */
+      .slider-group {
+        margin: 12px 0;
+      }
+      .slider-group label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 4px;
+        font-size: 0.9em;
+      }
+      .slider-container {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .slider-container input[type='range'] {
+        flex: 1;
+        height: 6px;
+        border-radius: 3px;
+        background: #ddd;
+        outline: none;
+        -webkit-appearance: none;
+      }
+      .slider-container input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #007bff;
+        cursor: pointer;
+      }
+      .slider-container input[type='range']::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #007bff;
+        cursor: pointer;
+        border: none;
+      }
+      .slider-value {
+        min-width: 50px;
+        font-family: monospace;
+        font-size: 0.85em;
+        color: #666;
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sidebar">
+      <h1>控制面板</h1>
+
+      <div class="control-group">
+        <h2>1. 加载数据</h2>
+        <button id="load-series-btn">加载DICOM序列</button>
+        <div id="status-text">准备就绪</div>
+      </div>
+
+      <div class="control-group">
+        <h2>2. 鼠标工具</h2>
+        <div class="tool-buttons">
+          <button id="tool-windowing-btn">窗宽窗位</button>
+          <button id="tool-scroll-btn">滚动切片</button>
+          <button id="tool-volume-btn">体渲染</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>3. 显示信息</h2>
+        <div id="slice-info">切片: N/A</div>
+        <div id="window-info">窗位: N/A | 窗宽: N/A</div>
+        <div id="dicom-metadata">请先加载序列。</div>
+      </div>
+
+      <div class="control-group">
+        <h2>4. 窗宽窗位控制</h2>
+
+        <!-- 预设按钮 -->
+        <div>
+          <strong>预设窗口：</strong>
+          <div class="preset-buttons">
+            <button id="preset-bone">骨窗</button>
+            <button id="preset-soft">软组织</button>
+            <button id="preset-lung">肺窗</button>
+            <button id="preset-brain">脑窗</button>
+          </div>
+        </div>
+
+        <!-- 窗位滑动条 -->
+        <div class="slider-group">
+          <label for="window-center-slider">窗位 (Window Center):</label>
+          <div class="slider-container">
+            <input type="range" id="window-center-slider" min="-1000" max="2000" value="40" step="10" />
+            <span class="slider-value" id="window-center-value">40</span>
+          </div>
+        </div>
+
+        <!-- 窗宽滑动条 -->
+        <div class="slider-group">
+          <label for="window-width-slider">窗宽 (Window Width):</label>
+          <div class="slider-container">
+            <input type="range" id="window-width-slider" min="1" max="3000" value="400" step="10" />
+            <span class="slider-value" id="window-width-value">400</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>5. 体渲染控制</h2>
+
+        <!-- 颜色模式控制 -->
+        <div class="slider-group">
+          <label>颜色模式:</label>
+          <div style="margin-top: 8px">
+            <label style="display: inline-block; margin-right: 16px">
+              <input type="radio" name="color-mode" value="color" checked />
+              彩色 (解剖学)
+            </label>
+            <label style="display: inline-block">
+              <input type="radio" name="color-mode" value="grayscale" />
+              灰度 (传统)
+            </label>
+          </div>
+        </div>
+
+        <!-- 透明度控制 -->
+        <div class="slider-group">
+          <label for="alpha-slider">透明度系数:</label>
+          <div class="slider-container">
+            <input type="range" id="alpha-slider" min="0.01" max="0.2" value="0.05" step="0.01" />
+            <span class="slider-value" id="alpha-value">0.05</span>
+          </div>
+        </div>
+
+        <!-- 渲染质量控制 -->
+        <div class="slider-group">
+          <label for="steps-slider">渲染质量 (采样次数):</label>
+          <div class="slider-container">
+            <input type="range" id="steps-slider" min="128" max="1024" value="512" step="64" />
+            <span class="slider-value" id="steps-value">512</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h2>6. 系统设置</h2>
+        <label>
+          <input type="radio" name="renderer-type" value="webgl" checked disabled />
+          GPU 渲染 (WebGL)
+        </label>
+        <br />
+        <label>
+          <input type="radio" name="renderer-type" value="canvas2d" disabled />
+          CPU 渲染 (Canvas 2D) - (暂不支持序列)
+        </label>
+
+        <div style="margin-top: 12px">
+          <label for="fps-input">目标FPS: </label>
+          <input type="number" id="fps-input" value="30" min="0" max="60" step="1" style="width: 60px" />
+        </div>
+      </div>
+    </div>
+
+    <div id="main-content">
+      <div id="canvas-container"></div>
+    </div>
+  </body>
+</html>
