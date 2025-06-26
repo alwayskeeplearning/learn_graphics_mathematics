@@ -30,7 +30,7 @@ const getDemosEntries = () => {
     htmlPlugins.push(
       new HtmlRspackPlugin({
         template: resolve(`demos/${entry}/index.html`),
-        filename: `demos/${entry}/index.html`,
+        filename: `${entry}/index.html`,
         inject: 'body',
         chunks: [`demos/${entry}`],
       }),

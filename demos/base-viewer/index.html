@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+      }
+      #app {
+        width: 100%;
+        height: 100%;
+      }
+      .container {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: row;
+      }
+      .viewer-controls {
+        width: 330px;
+        height: 100%;
+        background-color: #f0f0f0;
+      }
+      .viewer {
+        width: calc(100% - 330px);
+        height: 100%;
+        background-color: #000;
+        overflow: hidden;
+      }
+      .viewer-controls-header {
+        width: 100%;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-bottom: 1px solid #000;
+      }
+      .viewer-controls-header-title {
+        font-size: 24px;
+        font-weight: bold;
+        color: #000;
+      }
+      .viewer-controls-content {
+        width: 100%;
+        background-color: #f0f0f0;
+      }
+      .viewer-controls-content-item {
+        padding-top: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .upload-label {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #000;
+        border-radius: 5px;
+        padding: 5px 10px;
+        cursor: pointer;
+        background-color: #000;
+        color: #fff;
+        font-size: 16px;
+      }
+      .viewer-controls-content-item-tag {
+        padding-top: 20px;
+        width: 100%;
+        display: flex;
+        justify-content: flex-start;
+        flex-direction: column;
+      }
+      .viewer-controls-content-item-tag-item {
+        padding: 5px 10px;
+      }
+      .btn {
+        width: 100px;
+        height: 30px;
+        border: 1px solid #000;
+        border-radius: 5px;
+        margin: 0 10px;
+        cursor: pointer;
+      }
+      .btn.active {
+        background-color: #000;
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div class="container">
+        <div class="viewer-controls">
+          <div class="viewer-controls-header">
+            <div class="viewer-controls-header-title">
+              <span>Dicom-Viewer</span>
+            </div>
+          </div>
+          <div class="viewer-controls-content">
+            <div class="viewer-controls-content-item">
+              <button class="btn active" id="cpu-renderer">CPU渲染器</button>
+              <button class="btn" id="gpu-renderer">GPU渲染器</button>
+            </div>
+            <div class="viewer-controls-content-item">
+              <input type="file" name="uploadfile" id="img" style="display: none" multiple />
+              <label for="img" class="upload-label">请选择dicom影像</label>
+            </div>
+            <div class="viewer-controls-content-item">
+              <button class="btn active" id="window-center-window-width">窗宽窗位</button>
+              <button class="btn" id="multi-layer-scroll">多层滚动</button>
+            </div>
+            <div class="viewer-controls-content-item-tag">
+              <div class="viewer-controls-content-item-tag-item"><strong>影像数量:</strong> <span id="image-count"></span></div>
+              <div class="viewer-controls-content-item-tag-item"><strong>患者姓名:</strong> <span id="patient-name"></span></div>
+              <div class="viewer-controls-content-item-tag-item"><strong>图像尺寸:</strong> <span id="image-size"></span></div>
+            </div>
+            <div class="viewer-controls-content-item-tag">
+              <div class="viewer-controls-content-item-tag-item"><strong>切片索引:</strong> <span id="slice-index"></span></div>
+              <div class="viewer-controls-content-item-tag-item"><strong>窗位 (WC):</strong> <span id="window-center"></span></div>
+              <div class="viewer-controls-content-item-tag-item"><strong>窗宽 (WW):</strong> <span id="window-width"></span></div>
+            </div>
+            <div class="viewer-controls-content-item-tag"></div>
+          </div>
+        </div>
+        <div class="viewer" id="viewer"></div>
+      </div>
+    </div>
+  </body>
+</html>

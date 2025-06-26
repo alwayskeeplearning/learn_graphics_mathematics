@@ -8,6 +8,7 @@ import { getCSSModuleRules, getDemosEntries, resolve } from './helper.mjs';
 const { CopyRspackPlugin } = rspack;
 
 const { entries, htmlPlugins } = getDemosEntries();
+console.log(entries);
 
 const dev = defineConfig({
   mode: 'development',
