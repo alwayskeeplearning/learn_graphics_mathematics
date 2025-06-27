@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+      }
+      #app {
+        width: 100%;
+        height: 100%;
+      }
+      .container {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: row;
+      }
+      .left {
+        width: 50%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        border-right: 1px solid #000;
+      }
+      .left-top {
+        width: 100%;
+        height: 50%;
+        box-sizing: border-box;
+        border-bottom: 1px solid #000;
+      }
+      .left-bottom {
+        width: 100%;
+        height: 50%;
+      }
+      .right {
+        width: 50%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      .right-top {
+        width: 100%;
+        height: 50%;
+        box-sizing: border-box;
+        border-bottom: 1px solid #000;
+      }
+      .right-bottom {
+        width: 100%;
+        height: 50%;
+        background-color: #282828;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div class="container">
+        <div class="left">
+          <div class="left-top"></div>
+          <div class="left-bottom"></div>
+        </div>
+        <div class="right">
+          <div class="right-top"></div>
+          <div class="right-bottom"></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
