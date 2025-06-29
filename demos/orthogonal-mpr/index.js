@@ -16,6 +16,9 @@ class App {
       axialPosition: 0,
       coronalPosition: 0,
       sagittalPosition: 0,
+      axialThickness: 0,
+      coronalThickness: 0,
+      sagittalThickness: 0,
     };
     this.loader = new Loader();
     this.axialRenderer = null;
@@ -31,11 +34,17 @@ class App {
     this.axialPositionValue = document.getElementById('axial-position-value');
     this.coronalPositionValue = document.getElementById('coronal-position-value');
     this.sagittalPositionValue = document.getElementById('sagittal-position-value');
+    this.axialThicknessValue = document.getElementById('axial-thickness-value');
+    this.coronalThicknessValue = document.getElementById('coronal-thickness-value');
+    this.sagittalThicknessValue = document.getElementById('sagittal-thickness-value');
     this.windowWidth = document.getElementById('window-width');
     this.windowCenter = document.getElementById('window-center');
     this.axialPosition = document.getElementById('axial-position');
     this.coronalPosition = document.getElementById('coronal-position');
     this.sagittalPosition = document.getElementById('sagittal-position');
+    this.axialThickness = document.getElementById('axial-thickness');
+    this.coronalThickness = document.getElementById('coronal-thickness');
+    this.sagittalThickness = document.getElementById('sagittal-thickness');
     this.cpuRendererBtn = document.getElementById('cpu-renderer');
     this.gpuRendererBtn = document.getElementById('gpu-renderer');
     this.windowCenterWindowWidthBtn = document.getElementById('window-center-window-width');
@@ -66,9 +75,15 @@ class App {
       this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
       this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
       this.viewState.axialPosition = Math.floor(this.seriesDicomData.metaData.depth / 2);
+
       this.axialPosition.max = this.seriesDicomData.metaData.depth - 1;
-      this.coronalPosition.max = this.seriesDicomData.metaData.width - 1;
-      this.sagittalPosition.max = this.seriesDicomData.metaData.height - 1;
+      this.coronalPosition.max = this.seriesDicomData.metaData.height - 1;
+      this.sagittalPosition.max = this.seriesDicomData.metaData.width - 1;
+
+      this.axialThickness.max = this.seriesDicomData.metaData.depth - 1;
+      this.coronalThickness.max = this.seriesDicomData.metaData.height - 1;
+      this.sagittalThickness.max = this.seriesDicomData.metaData.width - 1;
+
       this.updateViewState();
       const sharedTexture = this.axialRenderer.setVolume(this.seriesDicomData);
       this.coronalRenderer.setVolume(this.seriesDicomData, sharedTexture);
@@ -113,6 +128,21 @@ class App {
     });
     this.windowCenter.addEventListener('input', e => {
       this.viewState.windowCenter = e.target.value;
+      this.renderAllViews();
+      this.updateViewState();
+    });
+    this.axialThickness.addEventListener('input', e => {
+      this.viewState.axialThickness = Number(e.target.value);
+      this.renderAllViews();
+      this.updateViewState();
+    });
+    this.coronalThickness.addEventListener('input', e => {
+      this.viewState.coronalThickness = Number(e.target.value);
+      this.renderAllViews();
+      this.updateViewState();
+    });
+    this.sagittalThickness.addEventListener('input', e => {
+      this.viewState.sagittalThickness = Number(e.target.value);
       this.renderAllViews();
       this.updateViewState();
     });
@@ -201,6 +231,9 @@ class App {
     this.axialPosition.value = Math.min(this.viewState.axialPosition, this.seriesDicomData.metaData.depth - 1);
     this.coronalPosition.value = Math.min(this.viewState.coronalPosition, this.seriesDicomData.metaData.width - 1);
     this.sagittalPosition.value = Math.min(this.viewState.sagittalPosition, this.seriesDicomData.metaData.height - 1);
+    this.axialThicknessValue.textContent = this.viewState.axialThickness;
+    this.coronalThicknessValue.textContent = this.viewState.coronalThickness;
+    this.sagittalThicknessValue.textContent = this.viewState.sagittalThickness;
   }
 }
 new App();

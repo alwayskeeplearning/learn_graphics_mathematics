@@ -22,6 +22,8 @@ const SLICE_FRAGMENT_SHADER = `
   uniform highp sampler3D u_texture;
   uniform float u_sliceIndex;
   uniform float u_numSlices;
+  uniform float u_slabThickness;
+  uniform vec3 u_volume_size;
 
   varying vec2 v_texCoord;
 
@@ -37,36 +39,65 @@ const SLICE_FRAGMENT_SHADER = `
   }
 
   void main() {
-    float slice_coord;
-    // For 3D Textures, the slice index is used to form the 3rd texture coordinate
-    // We add 0.5 to sample the center of the voxel
-    slice_coord = (u_sliceIndex + 0.5) / u_numSlices;
+    float slice_coord = (u_sliceIndex + 0.5) / u_numSlices;
 
-    // Boundary check: if the slice is outside the volume, render black
-    if (slice_coord < 0.0 || slice_coord > 1.0) {
-      out_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-      return;
+    float rawValue;
+
+    if (u_slabThickness < 1.0) {
+      
+      if (slice_coord < 0.0 || slice_coord > 1.0) {
+        out_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+      }
+      vec3 texCoord;
+      #if defined(CORONAL_VIEW)
+        // 冠状位视图 XZ 平面 slice_coord 为 y 轴 翻转Y为1-v_texCoord.y 所以是 v_texCoord.x, slice_coord, 1.0 - v_texCoord.y
+          texCoord = vec3(v_texCoord.x, slice_coord, 1.0 - v_texCoord.y);
+        //                    X            Y               Z
+        //                    .x           s              .y
+      #elif defined(SAGITTAL_VIEW)
+        // 矢状位视图 YZ 平面 slice_coord 为 x 轴 翻转Y为1-v_texCoord.y 所以是 slice_coord, v_texCoord.x, 1.0 - v_texCoord.y
+          texCoord = vec3(slice_coord, v_texCoord.x, 1.0 - v_texCoord.y);
+        //                    X            Y               Z
+        //                    s            .x             .y
+      #else
+        // 轴状位视图 XY 平面 slice_coord 为 z 轴 翻转Y为1-v_texCoord.y 所以是 v_texCoord.x, 1.0 - v_texCoord.y, slice_coord
+          texCoord = vec3(v_texCoord.x, 1.0 - v_texCoord.y, slice_coord);
+        //                    X            Y               Z
+        //                    .x           .y              s
+      #endif
+      rawValue = texture(u_texture, texCoord).r;
+    } else {
+      float maxValue = -99999.0;
+      int thickness = int(u_slabThickness) / 2;
+      
+      for (int i = -thickness; i <= thickness; i++) {
+        vec3 sample_coord;
+        float current_slice_offset = 0.0;
+
+        #if defined(CORONAL_VIEW)
+          float step = 1.0 / u_volume_size.y;
+          current_slice_offset = slice_coord + float(i) * step;
+          sample_coord = vec3(v_texCoord.x, current_slice_offset, 1.0 - v_texCoord.y);
+        #elif defined(SAGITTAL_VIEW)
+          float step = 1.0 / u_volume_size.x;
+          current_slice_offset = slice_coord + float(i) * step;
+          sample_coord = vec3(current_slice_offset, v_texCoord.x, 1.0 - v_texCoord.y);
+        #else
+          float step = 1.0 / u_volume_size.z;
+          current_slice_offset = slice_coord + float(i) * step;
+          sample_coord = vec3(v_texCoord.x, 1.0 - v_texCoord.y, current_slice_offset);
+        #endif
+
+        if (current_slice_offset >= 0.0 && current_slice_offset <= 1.0) {
+          float sampledValue = texture(u_texture, sample_coord).r;
+          maxValue = max(maxValue, sampledValue);
+        }
+      }
+      rawValue = maxValue;
     }
 
-    #if defined(CORONAL_VIEW)
-      // 冠状位视图 XZ 平面 slice_coord 为 y 轴 翻转Y为1-v_texCoord.y 所以是 v_texCoord.x, slice_coord, 1.0 - v_texCoord.y
-      vec3 texCoord = vec3(v_texCoord.x, slice_coord, 1.0 - v_texCoord.y);
-      //                    X            Y               Z
-      //                    .x           s              .y
-    #elif defined(SAGITTAL_VIEW)
-      // 矢状位视图 YZ 平面 slice_coord 为 x 轴 翻转Y为1-v_texCoord.y 所以是 slice_coord, v_texCoord.x, 1.0 - v_texCoord.y
-      vec3 texCoord = vec3(slice_coord, v_texCoord.x, 1.0 - v_texCoord.y);
-      //                    X            Y               Z
-      //                    s            .x             .y
-    #else
-      // 轴状位视图 XY 平面 slice_coord 为 z 轴 翻转Y为1-v_texCoord.y 所以是 v_texCoord.x, 1.0 - v_texCoord.y, slice_coord
-      vec3 texCoord = vec3(v_texCoord.x, 1.0 - v_texCoord.y, slice_coord);
-      //                    X            Y               Z
-      //                    .x           .y              s
-    #endif
-
-    float intensity = texture(u_texture, texCoord).r;
-    out_FragColor = vec4(vec3(applyWindow(intensity)), 1.0);
+    out_FragColor = vec4(vec3(applyWindow(rawValue)), 1.0);
   }
 `;
 
@@ -101,6 +132,8 @@ class GpuRenderer {
         u_windowCenter: { value: 0 },
         u_rescaleSlope: { value: 1.0 },
         u_rescaleIntercept: { value: 0.0 },
+        u_slabThickness: { value: 0.0 },
+        u_volume_size: { value: new THREE.Vector3(0, 0, 0) },
       },
       glslVersion: THREE.GLSL3,
     });
@@ -115,7 +148,9 @@ class GpuRenderer {
     this.lines = {
       visual: {},
       hitbox: {},
+      slab: {},
     };
+    this.handles = {};
 
     this.horizontalLineMaterial = null;
     this.verticalLineMaterial = null;
@@ -130,6 +165,7 @@ class GpuRenderer {
     this.lastMousePosition = { x: 0, y: 0 };
 
     this.setupCrosshairs();
+    this.setupThicknessControls();
     this.setupDragHandlers();
   }
   dispose() {
@@ -151,6 +187,13 @@ class GpuRenderer {
       this.verticalLineMaterial.resolution.set(width, height);
       this.hitboxHMaterial.resolution.set(width, height);
       this.hitboxVMaterial.resolution.set(width, height);
+
+      // --- 新增：更新所有虚线材质的分辨率 ---
+      Object.values(this.lines.slab).forEach(line => {
+        if (line.material) {
+          line.material.resolution.set(width, height);
+        }
+      });
     }
   }
   setVolume(seriesDicomData, texture3D) {
@@ -186,6 +229,9 @@ class GpuRenderer {
     this.slicePlane.material.uniforms.u_windowCenter.value = windowCenter;
     this.slicePlane.material.uniforms.u_rescaleSlope.value = rescaleSlope;
     this.slicePlane.material.uniforms.u_rescaleIntercept.value = rescaleIntercept;
+
+    // --- 在此处填充 u_volume_size ---
+    this.slicePlane.material.uniforms.u_volume_size.value.set(width, height, depth);
 
     // --- Physical Scaling Logic (Deactivated by default) ---
     // const { pixelSpacing, sliceThickness } = metaData;
@@ -232,7 +278,7 @@ class GpuRenderer {
 
     const { windowCenter, windowWidth } = viewState;
     const { width, height, depth } = this.volume.metaData;
-    const { axialPosition, coronalPosition, sagittalPosition } = viewState;
+    const { axialPosition, coronalPosition, sagittalPosition, axialThickness, coronalThickness, sagittalThickness } = viewState;
     const uniforms = this.slicePlane.material.uniforms;
 
     uniforms.u_windowCenter.value = windowCenter;
@@ -249,18 +295,21 @@ class GpuRenderer {
       case 'axial':
         uniforms.u_sliceIndex.value = axialPosition;
         uniforms.u_numSlices.value = depth;
+        uniforms.u_slabThickness.value = axialThickness || 0.0;
         xPos = sagittalPosition / (width - 1) - 0.5;
         yPos = 0.5 - coronalPosition / (height - 1);
         break;
       case 'coronal':
         uniforms.u_sliceIndex.value = coronalPosition;
         uniforms.u_numSlices.value = height;
+        uniforms.u_slabThickness.value = coronalThickness || 0.0;
         xPos = sagittalPosition / (width - 1) - 0.5;
         yPos = 0.5 - axialPosition / (depth - 1);
         break;
       case 'sagittal':
         uniforms.u_sliceIndex.value = sagittalPosition;
         uniforms.u_numSlices.value = width;
+        uniforms.u_slabThickness.value = sagittalThickness || 0.0;
         xPos = coronalPosition / (height - 1) - 0.5;
         yPos = 0.5 - axialPosition / (depth - 1);
         break;
@@ -285,6 +334,81 @@ class GpuRenderer {
 
     this.lines.hitbox.center?.position.set(xPos, yPos, zOffset);
 
+    // --- 核心修正：为水平和垂直方向分别获取厚度值 ---
+    let verticalSlabThickness = 0.0;
+    let horizontalSlabThickness = 0.0;
+
+    // 根据当前视图，决定水平线/垂直线分别对应哪个方向的厚度
+    if (this.orientation === 'axial') {
+      verticalSlabThickness = viewState.sagittalThickness || 0.0; // 垂直线(矢状位)代表Y轴，
+      horizontalSlabThickness = viewState.coronalThickness || 0.0; // 水平线(冠状位)代表X轴，
+    } else if (this.orientation === 'coronal') {
+      verticalSlabThickness = viewState.sagittalThickness || 0.0; // 垂直线(矢状位)代表Z轴，
+      horizontalSlabThickness = viewState.axialThickness || 0.0; // 水平线(轴状位)代表X轴，
+    } else {
+      // sagittal
+      verticalSlabThickness = viewState.coronalThickness || 0.0; // 垂直线(冠状位)代表Z轴
+      horizontalSlabThickness = viewState.axialThickness || 0.0; // 水平线(轴状位)代表Y轴
+    }
+
+    const hasVerticalSlab = verticalSlabThickness > 0.1;
+    const hasHorizontalSlab = horizontalSlabThickness > 0.1;
+
+    // --- 更新可见性 ---
+    this.lines.slab.h_top.visible = this.lines.slab.h_bottom.visible = hasHorizontalSlab;
+    this.lines.slab.v_left.visible = this.lines.slab.v_right.visible = hasVerticalSlab;
+    // (手柄的可见性我们将在下一步的交互中处理)
+
+    // --- 更新位置 ---
+    if (hasHorizontalSlab || hasVerticalSlab) {
+      let verticalOffset = 0;
+      let horizontalOffset = 0;
+
+      // (偏移量计算逻辑不变)
+      if (this.orientation === 'axial') {
+        verticalOffset = verticalSlabThickness / 2 / width;
+        horizontalOffset = horizontalSlabThickness / 2 / height;
+      } else if (this.orientation === 'coronal') {
+        verticalOffset = verticalSlabThickness / 2 / width; // 注意这里的对应关系
+        horizontalOffset = horizontalSlabThickness / 2 / depth;
+      } else {
+        // sagittal
+        verticalOffset = verticalSlabThickness / 2 / height;
+        horizontalOffset = horizontalSlabThickness / 2 / depth;
+      }
+
+      // 水平方向的贯穿线 (由 horizontalOffset 控制)
+      const hTop = yPos + horizontalOffset;
+      const hBottom = yPos - horizontalOffset;
+      this.lines.slab.h_top.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
+      this.lines.slab.h_bottom.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
+
+      // 同步更新水平方向的hitbox
+      this.lines.slab.h_top_hitbox.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
+      this.lines.slab.h_bottom_hitbox.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
+
+      // 垂直方向的贯穿线 (由 verticalOffset 控制)
+      const vLeft = xPos - verticalOffset;
+      const vRight = xPos + verticalOffset;
+      this.lines.slab.v_left.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
+      this.lines.slab.v_right.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
+
+      // 同步更新垂直方向的hitbox
+      this.lines.slab.v_left_hitbox.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
+      this.lines.slab.v_right_hitbox.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
+
+      this.lines.slab.h_top.computeLineDistances();
+      this.lines.slab.h_bottom.computeLineDistances();
+      this.lines.slab.v_left.computeLineDistances();
+      this.lines.slab.v_right.computeLineDistances();
+
+      // 手柄定位
+      const handlePosOffset = 0.2; // 调整手柄位置
+      this.handles.h_top.position.set(xPos - handlePosOffset, hTop, zOffset + 0.01);
+      this.handles.h_bottom.position.set(xPos - handlePosOffset, hBottom, zOffset + 0.01);
+      this.handles.v_left.position.set(vLeft, yPos + handlePosOffset, zOffset + 0.01);
+      this.handles.v_right.position.set(vRight, yPos + handlePosOffset, zOffset + 0.01);
+    }
     this.renderer.render(this.scene, this.camera);
   }
   setupCrosshairs() {
@@ -318,10 +442,10 @@ class GpuRenderer {
     };
 
     const hitboxLineOptions = {
-      ...lineOptions,
-      linewidth: 8, // A much larger width for easy clicking
-      opacity: 0.2, // Make it invisible
+      linewidth: 8, // 较宽的hitbox便于鼠标悬停检测
       transparent: true,
+      opacity: 0.2, // 完全透明
+      resolution: new THREE.Vector2(width, height),
     };
 
     this.horizontalLineMaterial = new LineMaterial({ ...lineOptions, color: horizontalColor });
@@ -366,6 +490,80 @@ class GpuRenderer {
     this.lines.hitbox.center.userData.type = 'center';
     this.hitboxGroup.add(this.lines.hitbox.center);
   }
+  setupThicknessControls() {
+    const handleSize = 0.05;
+    const handleGeometry = new THREE.PlaneGeometry(handleSize, handleSize);
+    const { width, height } = this.container.getBoundingClientRect();
+
+    const lineOptions = {
+      linewidth: 1,
+      dashed: true,
+      dashSize: 0.01,
+      gapSize: 0.01,
+      resolution: new THREE.Vector2(width, height),
+      transparent: true,
+      opacity: 0.7,
+    };
+
+    const hitboxLineOptions = {
+      linewidth: 8, // 较宽的hitbox便于鼠标悬停检测
+      transparent: true,
+      opacity: 0.2, // 完全透明
+      resolution: new THREE.Vector2(width, height),
+    };
+
+    // --- 水平方向的控制器 ---
+    const hLineMaterial = new LineMaterial({ ...lineOptions, color: this.horizontalLineMaterial.color });
+    const hHandleMaterial = new THREE.MeshBasicMaterial({ color: this.horizontalLineMaterial.color, transparent: true, opacity: 0.8 });
+    const hHitboxMaterial = new LineMaterial({ ...hitboxLineOptions, color: this.horizontalLineMaterial.color });
+
+    // 上、下两条贯穿的虚线（可见）
+    this.lines.slab.h_top = new Line2(new LineGeometry(), hLineMaterial);
+    this.lines.slab.h_bottom = new Line2(new LineGeometry(), hLineMaterial.clone());
+
+    // 上、下两条贯穿的虚线（hitbox）
+    this.lines.slab.h_top_hitbox = new Line2(new LineGeometry(), hHitboxMaterial);
+    this.lines.slab.h_bottom_hitbox = new Line2(new LineGeometry(), hHitboxMaterial.clone());
+    this.lines.slab.h_top_hitbox.userData.type = 'slab_horizontal';
+    this.lines.slab.h_bottom_hitbox.userData.type = 'slab_horizontal';
+
+    // 水平方向的手柄
+    this.handles.h_top = new THREE.Mesh(handleGeometry, hHandleMaterial.clone());
+    this.handles.h_bottom = new THREE.Mesh(handleGeometry, hHandleMaterial.clone());
+    this.handles.h_top.name = 'handle_h_top';
+    this.handles.h_bottom.name = 'handle_h_bottom';
+
+    // --- 垂直方向的控制器 ---
+    const vLineMaterial = new LineMaterial({ ...lineOptions, color: this.verticalLineMaterial.color });
+    const vHandleMaterial = new THREE.MeshBasicMaterial({ color: this.verticalLineMaterial.color, transparent: true, opacity: 0.8 });
+    const vHitboxMaterial = new LineMaterial({ ...hitboxLineOptions, color: this.verticalLineMaterial.color });
+
+    // 左、右两条贯穿的虚线（可见）
+    this.lines.slab.v_left = new Line2(new LineGeometry(), vLineMaterial);
+    this.lines.slab.v_right = new Line2(new LineGeometry(), vLineMaterial.clone());
+
+    // 左、右两条贯穿的虚线（hitbox）
+    this.lines.slab.v_left_hitbox = new Line2(new LineGeometry(), vHitboxMaterial);
+    this.lines.slab.v_right_hitbox = new Line2(new LineGeometry(), vHitboxMaterial.clone());
+    this.lines.slab.v_left_hitbox.userData.type = 'slab_vertical';
+    this.lines.slab.v_right_hitbox.userData.type = 'slab_vertical';
+
+    // 垂直方向的手柄
+    this.handles.v_left = new THREE.Mesh(handleGeometry, vHandleMaterial.clone());
+    this.handles.v_right = new THREE.Mesh(handleGeometry, vHandleMaterial.clone());
+    this.handles.v_left.name = 'handle_v_left';
+    this.handles.v_right.name = 'handle_v_right';
+
+    // 将可见线条添加到场景中
+    this.scene.add(this.lines.slab.h_top, this.lines.slab.h_bottom, this.lines.slab.v_left, this.lines.slab.v_right, this.handles.h_top, this.handles.h_bottom, this.handles.v_left, this.handles.v_right);
+
+    // 将hitbox添加到hitboxGroup中
+    this.hitboxGroup.add(this.lines.slab.h_top_hitbox, this.lines.slab.h_bottom_hitbox, this.lines.slab.v_left_hitbox, this.lines.slab.v_right_hitbox);
+
+    // 默认全部隐藏
+    Object.values(this.lines.slab).forEach(line => (line.visible = false));
+    Object.values(this.handles).forEach(handle => (handle.visible = false));
+  }
   setupDragHandlers() {
     this.handleMouseDown = this.handleMouseDown.bind(this);
     this.handleMouseMove = this.handleMouseMove.bind(this);
@@ -401,29 +599,57 @@ class GpuRenderer {
     if (!this.isDragging) {
       const { width: canvasWidth, height: canvasHeight, left: canvasLeft, top: canvasTop } = this.canvas.getBoundingClientRect();
       const mouse = new THREE.Vector2();
-      // 将鼠标位置转换为归一化设备坐标（NDC），范围为[-1, 1]
       mouse.x = ((event.clientX - canvasLeft) / canvasWidth) * 2 - 1;
       mouse.y = -((event.clientY - canvasTop) / canvasHeight) * 2 + 1;
 
       this.raycaster.setFromCamera(mouse, this.camera);
       const intersects = this.raycaster.intersectObjects(this.hitboxGroup.children, true);
 
+      // --- 新增：手柄显示逻辑 ---
+      // 首先隐藏所有手柄
+      Object.values(this.handles).forEach(handle => (handle.visible = false));
+
       if (intersects.length > 0) {
         this.dragTarget = intersects[0].object.userData.type;
 
+        // 根据悬停的对象类型，显示对应的手柄
         if (this.dragTarget === 'horizontal') {
+          // 悬停在十字线的水平部分，显示水平方向的厚度手柄
+          this.handles.h_top.visible = true;
+          this.handles.h_bottom.visible = true;
+          console.log('horizontal', this.handles.h_top);
+
           this.canvas.style.cursor = 'row-resize';
         } else if (this.dragTarget === 'vertical') {
+          // 悬停在十字线的垂直部分，显示垂直方向的厚度手柄
+          this.handles.v_left.visible = true;
+          this.handles.v_right.visible = true;
+          this.canvas.style.cursor = 'col-resize';
+        } else if (this.dragTarget === 'slab_horizontal') {
+          // 悬停在水平厚度辅助线，显示水平方向的厚度手柄
+          this.handles.h_top.visible = true;
+          this.handles.h_bottom.visible = true;
+          this.canvas.style.cursor = 'row-resize';
+          console.log('slab_horizontal');
+        } else if (this.dragTarget === 'slab_vertical') {
+          // 悬停在垂直厚度辅助线，显示垂直方向的厚度手柄
+          this.handles.v_left.visible = true;
+          this.handles.v_right.visible = true;
           this.canvas.style.cursor = 'col-resize';
         } else if (this.dragTarget === 'center') {
+          // 悬停在中心点，显示所有手柄
+          Object.values(this.handles).forEach(handle => (handle.visible = true));
           this.canvas.style.cursor = 'all-scroll';
         } else {
           this.canvas.style.cursor = 'default';
         }
       } else {
+        // 没有悬停在任何交互对象上，隐藏所有手柄
         this.canvas.style.cursor = 'default';
       }
     }
+
+    // 拖拽逻辑保持不变
     if (!this.isDragging || !this.dragTarget) return;
 
     const deltaX = event.clientX - this.lastMousePosition.x;
@@ -455,7 +681,6 @@ class GpuRenderer {
         target = 'sagittal';
         delta = deltaX;
       } else {
-        // sagittal
         target = 'coronal';
         delta = deltaX;
       }
