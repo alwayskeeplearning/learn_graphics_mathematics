@@ -165,7 +165,7 @@ class App {
   handleDrag(stateUpdate) {
     if (stateUpdate.type !== 'drag' || !this.seriesDicomData) return;
 
-    const { metaData } = this.seriesDicomData;
+    // const { metaData } = this.seriesDicomData;
     // const maxPositions = {
     //   axial: metaData.depth - 1,
     //   coronal: metaData.width - 1,
