@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Document</title>
+    <title>正交MPR查看器 - 优化四窗格布局</title>
     <style>
       html,
       body {
@@ -11,66 +11,313 @@
         padding: 0;
         width: 100%;
         height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       }
       #app {
         width: 100%;
         height: 100%;
       }
+
+      /* 主容器 - 2x2网格布局 */
       .container {
         width: 100%;
         height: 100%;
-        display: flex;
-        flex-direction: row;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        gap: 2px;
+        background-color: #1a1a1a;
       }
-      .left {
-        width: 50%;
+
+      /* 查看器窗格基础样式 */
+      .viewer-pane {
+        background-color: #000000;
+        border: 1px solid #333333;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.2s ease;
+      }
+
+      .viewer-pane:hover {
+        border-color: #007bff;
+        box-shadow: 0 0 10px rgba(0, 123, 255, 0.3);
+      }
+
+      .viewer-pane.active {
+        border-color: #28a745;
+        box-shadow: 0 0 15px rgba(40, 167, 69, 0.4);
+      }
+
+      /* 窗格标签 */
+      .pane-label {
+        position: absolute;
+        top: 8px;
+        left: 12px;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 500;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 4px 8px;
+        border-radius: 4px;
+        z-index: 10;
+        pointer-events: none;
+      }
+
+      /* 查看器容器 */
+      .viewer {
+        width: 100%;
         height: 100%;
         display: flex;
-        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+        font-size: 14px;
+      }
+
+      /* 轴状位 - 左上角 */
+      .axial-pane {
+        grid-column: 1;
+        grid-row: 1;
+      }
+
+      /* 冠状位 - 右上角 */
+      .coronal-pane {
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      /* 矢状位 - 左下角 */
+      .sagittal-pane {
+        grid-column: 1;
+        grid-row: 2;
+      }
+
+      /* 控制面板 - 右下角 */
+      .control-pane {
+        grid-column: 2;
+        grid-row: 2;
+        background-color: #2d2d2d;
+        padding: 16px;
         box-sizing: border-box;
-        border-right: 1px solid #000;
+        overflow-y: auto;
+        border: 1px solid #444444;
+        transition: all 0.3s ease;
+        position: relative;
       }
-      .left-top {
+
+      /* 控制面板收缩状态 */
+      .control-pane.collapsed {
+        padding: 8px;
+      }
+
+      .control-pane.collapsed .control-content {
+        display: none;
+      }
+
+      /* 操作项样式 */
+      .operation-item {
         width: 100%;
-        height: 50%;
+        color: #ffffff;
+        padding: 8px 0;
         box-sizing: border-box;
-        border-bottom: 1px solid #000;
+        border-bottom: 1px solid #404040;
       }
-      .left-bottom {
+
+      .operation-item:last-child {
+        border-bottom: none;
+      }
+
+      .operation-item span {
+        display: inline-block;
+        width: 100px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+
+      .operation-item input[type='range'] {
+        width: calc(100% - 105px);
+        margin-left: 5px;
+        accent-color: #007bff;
+      }
+
+      .operation-item input[type='file'] {
         width: 100%;
-        height: 50%;
+        color: #ffffff;
+        background: #404040;
+        border: 1px solid #555555;
+        border-radius: 4px;
+        padding: 6px;
+        font-size: 12px;
       }
-      .right {
-        width: 50%;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
+
+      /* 按钮样式 */
+      .btn {
+        min-width: 50px;
+        height: 26px;
+        border-radius: 4px;
+        border: 1px solid #555555;
+        background: #404040;
+        color: #ffffff;
+        cursor: pointer;
+        font-size: 11px;
+        margin-right: 4px;
+        transition: all 0.2s ease;
       }
-      .right-top {
-        width: 100%;
-        height: 50%;
-        box-sizing: border-box;
-        border-bottom: 1px solid #000;
+
+      .btn:hover {
+        background: #4a4a4a;
+        border-color: #666666;
       }
-      .right-bottom {
-        width: 100%;
-        height: 50%;
-        background-color: #282828;
+
+      .btn.active {
+        background: #007bff;
+        border-color: #007bff;
+        color: #ffffff;
+      }
+
+      .btn.active:hover {
+        background: #0056b3;
+        border-color: #0056b3;
+      }
+
+      /* 数值显示 */
+      .value-display {
+        color: #007bff;
+        font-weight: 600;
+        min-width: 30px;
+        text-align: right;
+      }
+
+      /* 响应式设计 */
+      @media (max-width: 1024px) {
+        .container {
+          gap: 1px;
+        }
+        .control-pane {
+          padding: 12px;
+        }
+        .operation-item span {
+          width: 80px;
+          font-size: 11px;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .pane-label {
+          font-size: 10px;
+          padding: 2px 6px;
+        }
+        .control-pane {
+          padding: 8px;
+        }
+        .btn {
+          min-width: 40px;
+          height: 24px;
+          font-size: 10px;
+        }
+      }
+      .axial-label {
+        color: #00ffff;
+      }
+      .coronal-label {
+        color: #ff00ff;
+      }
+      .sagittal-label {
+        color: #ffff00;
       }
     </style>
   </head>
   <body>
     <div id="app">
       <div class="container">
-        <div class="left">
-          <div class="left-top"></div>
-          <div class="left-bottom"></div>
+        <!-- 轴状位查看器 - 左上角 -->
+        <div class="viewer-pane axial-pane" id="axial-pane">
+          <div class="pane-label axial-label">轴状位 (Axial)</div>
+          <div id="viewer-axial" class="viewer"></div>
         </div>
-        <div class="right">
-          <div class="right-top"></div>
-          <div class="right-bottom"></div>
+
+        <!-- 冠状位查看器 - 右上角 -->
+        <div class="viewer-pane coronal-pane" id="coronal-pane">
+          <div class="pane-label coronal-label">冠状位 (Coronal)</div>
+          <div id="viewer-coronal" class="viewer"></div>
+        </div>
+
+        <!-- 矢状位查看器 - 左下角 -->
+        <div class="viewer-pane sagittal-pane" id="sagittal-pane">
+          <div class="pane-label sagittal-label">矢状位 (Sagittal)</div>
+          <div id="viewer-sagittal" class="viewer"></div>
+        </div>
+
+        <!-- 控制面板 - 右下角 -->
+        <div class="control-pane" id="control-pane">
+          <div class="control-content" id="control-content">
+            <div class="operation-item">
+              <input type="file" id="file-input" webkitdirectory placeholder="选择DICOM文件夹..." />
+            </div>
+
+            <div class="operation-item">
+              <span>渲染方式</span>
+              <button id="cpu-renderer" class="btn">CPU</button>
+              <button id="gpu-renderer" class="btn active">GPU</button>
+            </div>
+
+            <div class="operation-item">
+              <span>操作模式</span>
+              <button id="window-center-window-width" class="btn active">窗宽窗位</button>
+              <button id="multi-layer-scroll" class="btn">层面滚动</button>
+            </div>
+
+            <div class="operation-item">
+              <span>窗宽</span>
+              <b class="value-display" id="window-width-value">0</b>
+              <input id="window-width" type="range" min="1" max="4095" value="0" />
+            </div>
+
+            <div class="operation-item">
+              <span>窗位</span>
+              <b class="value-display" id="window-center-value">0</b>
+              <input id="window-center" type="range" min="-1024" max="3071" value="0" />
+            </div>
+
+            <div class="operation-item">
+              <span>轴状位</span>
+              <b class="value-display" id="axial-position-value">0</b>
+              <input id="axial-position" type="range" min="0" max="100" value="0" />
+            </div>
+
+            <div class="operation-item">
+              <span>冠状位</span>
+              <b class="value-display" id="coronal-position-value">0</b>
+              <input id="coronal-position" type="range" min="0" max="100" value="0" />
+            </div>
+
+            <div class="operation-item">
+              <span>矢状位</span>
+              <b class="value-display" id="sagittal-position-value">0</b>
+              <input id="sagittal-position" type="range" min="0" max="100" value="0" />
+            </div>
+          </div>
         </div>
       </div>
     </div>
+
+    <script>
+      // 控制面板收缩功能
+      document.addEventListener('DOMContentLoaded', function () {
+        const controlPane = document.getElementById('control-pane');
+
+        // 窗格激活状态切换
+        const viewerPanes = document.querySelectorAll('.viewer-pane');
+        viewerPanes.forEach(pane => {
+          pane.addEventListener('click', function () {
+            viewerPanes.forEach(p => p.classList.remove('active'));
+            this.classList.add('active');
+          });
+        });
+
+        // 默认激活轴状位
+        document.getElementById('axial-pane').classList.add('active');
+      });
+    </script>
   </body>
 </html>

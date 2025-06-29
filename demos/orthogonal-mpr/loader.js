@@ -25,6 +25,8 @@ class Loader {
             patientName: dataSet.string('x00100010'),
             width: dataSet.uint16('x00280010'),
             height: dataSet.uint16('x00280011'),
+            pixelSpacing: dataSet.string('x00280030').split('\\').map(parseFloat),
+            sliceThickness: dataSet.floatString('x00180050'),
             windowCenter: dataSet.floatString('x00281050', 0),
             windowWidth: dataSet.floatString('x00281051', 0),
             rescaleSlope: dataSet.floatString('x00281053', 0),
