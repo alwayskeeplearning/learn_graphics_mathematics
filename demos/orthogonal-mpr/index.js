@@ -166,11 +166,11 @@ class App {
     if (stateUpdate.type !== 'drag' || !this.seriesDicomData) return;
 
     const { metaData } = this.seriesDicomData;
-    const maxPositions = {
-      axial: metaData.depth - 1,
-      coronal: metaData.width - 1,
-      sagittal: metaData.height - 1,
-    };
+    // const maxPositions = {
+    //   axial: metaData.depth - 1,
+    //   coronal: metaData.width - 1,
+    //   sagittal: metaData.height - 1,
+    // };
 
     stateUpdate.changes.forEach(({ target, delta }) => {
       console.log('axis', target, delta);
