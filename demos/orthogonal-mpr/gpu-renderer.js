@@ -351,13 +351,14 @@ class GpuRenderer {
       horizontalSlabThickness = viewState.axialThickness || 0.0; // 水平线(轴状位)代表Y轴
     }
 
-    const hasVerticalSlab = verticalSlabThickness > 0.1;
-    const hasHorizontalSlab = horizontalSlabThickness > 0.1;
+    const hasVerticalSlab = verticalSlabThickness > 0.0;
+    const hasHorizontalSlab = horizontalSlabThickness > 0.0;
 
     // --- 更新可见性 ---
     this.lines.slab.h_top.visible = this.lines.slab.h_bottom.visible = hasHorizontalSlab;
     this.lines.slab.v_left.visible = this.lines.slab.v_right.visible = hasVerticalSlab;
-    // (手柄的可见性我们将在下一步的交互中处理)
+    this.lines.slab.h_top_hitbox.visible = this.lines.slab.h_bottom_hitbox.visible = hasHorizontalSlab;
+    this.lines.slab.v_left_hitbox.visible = this.lines.slab.v_right_hitbox.visible = hasVerticalSlab;
 
     // --- 更新位置 ---
     if (hasHorizontalSlab || hasVerticalSlab) {
@@ -404,10 +405,22 @@ class GpuRenderer {
 
       // 手柄定位
       const handlePosOffset = 0.2; // 调整手柄位置
-      this.handles.h_top.position.set(xPos - handlePosOffset, hTop, zOffset + 0.01);
-      this.handles.h_bottom.position.set(xPos - handlePosOffset, hBottom, zOffset + 0.01);
-      this.handles.v_left.position.set(vLeft, yPos + handlePosOffset, zOffset + 0.01);
-      this.handles.v_right.position.set(vRight, yPos + handlePosOffset, zOffset + 0.01);
+      this.handles.h_top_left.position.set(xPos - handlePosOffset, hTop, zOffset + 0.01);
+      this.handles.h_top_right.position.set(xPos + handlePosOffset, hTop, zOffset + 0.01);
+      this.handles.h_bottom_left.position.set(xPos - handlePosOffset, hBottom, zOffset + 0.01);
+      this.handles.h_bottom_right.position.set(xPos + handlePosOffset, hBottom, zOffset + 0.01);
+      this.handles.v_left_top.position.set(vLeft, yPos + handlePosOffset, zOffset + 0.01);
+      this.handles.v_right_top.position.set(vRight, yPos + handlePosOffset, zOffset + 0.01);
+      this.handles.v_left_bottom.position.set(vLeft, yPos - handlePosOffset, zOffset + 0.01);
+      this.handles.v_right_bottom.position.set(vRight, yPos - handlePosOffset, zOffset + 0.01);
+      this.handles.h_top_left.visible = hasHorizontalSlab;
+      this.handles.h_top_right.visible = hasHorizontalSlab;
+      this.handles.h_bottom_left.visible = hasHorizontalSlab;
+      this.handles.h_bottom_right.visible = hasHorizontalSlab;
+      this.handles.v_left_top.visible = hasVerticalSlab;
+      this.handles.v_right_top.visible = hasVerticalSlab;
+      this.handles.v_left_bottom.visible = hasVerticalSlab;
+      this.handles.v_right_bottom.visible = hasVerticalSlab;
     }
     this.renderer.render(this.scene, this.camera);
   }
@@ -415,18 +428,18 @@ class GpuRenderer {
     const { width, height } = this.container.getBoundingClientRect();
     // .axial-label { color: #00ffff; }   // 青色 - 轴状位
     // .coronal-label { color: #ff00ff; } // 品红 - 冠状位
-    // .sagittal-label { color: #ffff00; }// 黄色 - 矢状位
+    // .sagittal-label { color: #00ff00; }// 黄色 - 矢状位
 
     let horizontalColor, verticalColor;
 
     if (this.orientation === 'axial') {
       // 水平线代表冠状位(X), 垂直线代表矢状位(Y)
       horizontalColor = 0xff00ff; // Coronal
-      verticalColor = 0xffff00; // Sagittal
+      verticalColor = 0x00ff00; // Sagittal
     } else if (this.orientation === 'coronal') {
       // 水平线代表轴状位(X), 垂直线代表矢状位(Z)
       horizontalColor = 0x00ffff; // Axial
-      verticalColor = 0xffff00; // Sagittal
+      verticalColor = 0x00ff00; // Sagittal
     } else if (this.orientation === 'sagittal') {
       // 水平线代表轴状位(Y), 垂直线代表冠状位(Z)
       horizontalColor = 0x00ffff; // Axial
@@ -491,7 +504,7 @@ class GpuRenderer {
     this.hitboxGroup.add(this.lines.hitbox.center);
   }
   setupThicknessControls() {
-    const handleSize = 0.05;
+    const handleSize = 0.02;
     const handleGeometry = new THREE.PlaneGeometry(handleSize, handleSize);
     const { width, height } = this.container.getBoundingClientRect();
 
@@ -514,7 +527,7 @@ class GpuRenderer {
 
     // --- 水平方向的控制器 ---
     const hLineMaterial = new LineMaterial({ ...lineOptions, color: this.horizontalLineMaterial.color });
-    const hHandleMaterial = new THREE.MeshBasicMaterial({ color: this.horizontalLineMaterial.color, transparent: true, opacity: 0.8 });
+    const hHandleMaterial = new THREE.MeshBasicMaterial({ color: this.horizontalLineMaterial.color, transparent: true, opacity: 0.7 });
     const hHitboxMaterial = new LineMaterial({ ...hitboxLineOptions, color: this.horizontalLineMaterial.color });
 
     // 上、下两条贯穿的虚线（可见）
@@ -528,10 +541,14 @@ class GpuRenderer {
     this.lines.slab.h_bottom_hitbox.userData.type = 'slab_horizontal';
 
     // 水平方向的手柄
-    this.handles.h_top = new THREE.Mesh(handleGeometry, hHandleMaterial.clone());
-    this.handles.h_bottom = new THREE.Mesh(handleGeometry, hHandleMaterial.clone());
-    this.handles.h_top.name = 'handle_h_top';
-    this.handles.h_bottom.name = 'handle_h_bottom';
+    this.handles.h_top_left = new THREE.Mesh(handleGeometry, hHandleMaterial);
+    this.handles.h_top_right = new THREE.Mesh(handleGeometry, hHandleMaterial.clone());
+    this.handles.h_bottom_left = new THREE.Mesh(handleGeometry, hHandleMaterial.clone());
+    this.handles.h_bottom_right = new THREE.Mesh(handleGeometry, hHandleMaterial.clone());
+    this.handles.h_top_left.name = 'handle_h_top';
+    this.handles.h_top_right.name = 'handle_h_top';
+    this.handles.h_bottom_left.name = 'handle_h_bottom';
+    this.handles.h_bottom_right.name = 'handle_h_bottom';
 
     // --- 垂直方向的控制器 ---
     const vLineMaterial = new LineMaterial({ ...lineOptions, color: this.verticalLineMaterial.color });
@@ -549,10 +566,14 @@ class GpuRenderer {
     this.lines.slab.v_right_hitbox.userData.type = 'slab_vertical';
 
     // 垂直方向的手柄
-    this.handles.v_left = new THREE.Mesh(handleGeometry, vHandleMaterial.clone());
-    this.handles.v_right = new THREE.Mesh(handleGeometry, vHandleMaterial.clone());
-    this.handles.v_left.name = 'handle_v_left';
-    this.handles.v_right.name = 'handle_v_right';
+    this.handles.v_left_top = new THREE.Mesh(handleGeometry, vHandleMaterial);
+    this.handles.v_right_top = new THREE.Mesh(handleGeometry, vHandleMaterial.clone());
+    this.handles.v_left_bottom = new THREE.Mesh(handleGeometry, vHandleMaterial.clone());
+    this.handles.v_right_bottom = new THREE.Mesh(handleGeometry, vHandleMaterial.clone());
+    this.handles.v_left_top.name = 'handle_v_left';
+    this.handles.v_left_bottom.name = 'handle_v_left';
+    this.handles.v_right_top.name = 'handle_v_right';
+    this.handles.v_right_bottom.name = 'handle_v_right';
 
     // 将可见线条添加到场景中
     this.scene.add(this.lines.slab.h_top, this.lines.slab.h_bottom, this.lines.slab.v_left, this.lines.slab.v_right, this.handles.h_top, this.handles.h_bottom, this.handles.v_left, this.handles.v_right);
@@ -611,30 +632,37 @@ class GpuRenderer {
 
       if (intersects.length > 0) {
         this.dragTarget = intersects[0].object.userData.type;
+        console.log(this.dragTarget);
 
         // 根据悬停的对象类型，显示对应的手柄
         if (this.dragTarget === 'horizontal') {
           // 悬停在十字线的水平部分，显示水平方向的厚度手柄
-          this.handles.h_top.visible = true;
-          this.handles.h_bottom.visible = true;
-          console.log('horizontal', this.handles.h_top);
-
+          this.handles.h_top_left.visible = true;
+          this.handles.h_top_right.visible = true;
+          this.handles.h_bottom_left.visible = true;
+          this.handles.h_bottom_right.visible = true;
           this.canvas.style.cursor = 'row-resize';
         } else if (this.dragTarget === 'vertical') {
           // 悬停在十字线的垂直部分，显示垂直方向的厚度手柄
-          this.handles.v_left.visible = true;
-          this.handles.v_right.visible = true;
+          this.handles.v_left_top.visible = true;
+          this.handles.v_right_top.visible = true;
+          this.handles.v_left_bottom.visible = true;
+          this.handles.v_right_bottom.visible = true;
           this.canvas.style.cursor = 'col-resize';
         } else if (this.dragTarget === 'slab_horizontal') {
           // 悬停在水平厚度辅助线，显示水平方向的厚度手柄
-          this.handles.h_top.visible = true;
-          this.handles.h_bottom.visible = true;
+          this.handles.h_top_left.visible = true;
+          this.handles.h_top_right.visible = true;
+          this.handles.h_bottom_left.visible = true;
+          this.handles.h_bottom_right.visible = true;
           this.canvas.style.cursor = 'row-resize';
           console.log('slab_horizontal');
         } else if (this.dragTarget === 'slab_vertical') {
           // 悬停在垂直厚度辅助线，显示垂直方向的厚度手柄
-          this.handles.v_left.visible = true;
-          this.handles.v_right.visible = true;
+          this.handles.v_left_top.visible = true;
+          this.handles.v_right_top.visible = true;
+          this.handles.v_left_bottom.visible = true;
+          this.handles.v_right_bottom.visible = true;
           this.canvas.style.cursor = 'col-resize';
         } else if (this.dragTarget === 'center') {
           // 悬停在中心点，显示所有手柄
