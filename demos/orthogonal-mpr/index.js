@@ -1,6 +1,5 @@
 import Loader from './loader';
-import CpuRenderer from './cpu-renderer';
-import GpuRenderer from './gpu-renderer';
+import GpuRenderer from './renderer';
 
 // const SCROLL_THRESHOLD = 5;
 
@@ -45,7 +44,6 @@ class App {
     this.axialThickness = document.getElementById('axial-thickness');
     this.coronalThickness = document.getElementById('coronal-thickness');
     this.sagittalThickness = document.getElementById('sagittal-thickness');
-    this.cpuRendererBtn = document.getElementById('cpu-renderer');
     this.gpuRendererBtn = document.getElementById('gpu-renderer');
     this.windowCenterWindowWidthBtn = document.getElementById('window-center-window-width');
     this.multiLayerScrollBtn = document.getElementById('multi-layer-scroll');
@@ -58,13 +56,10 @@ class App {
   attachEvents() {
     this.fileInput.addEventListener('change', async e => {
       if (!this.axialRenderer) {
-        if (this.cpuRendererBtn.classList.contains('active')) {
-          this.currentRenderer = new CpuRenderer(this.viewer);
-        } else {
-          this.axialRenderer = new GpuRenderer(this.viewerAxial, 'axial', this.handleDrag);
-          this.coronalRenderer = new GpuRenderer(this.viewerCoronal, 'coronal', this.handleDrag);
-          this.sagittalRenderer = new GpuRenderer(this.viewerSagittal, 'sagittal', this.handleDrag);
-        }
+        this.axialRenderer = new GpuRenderer(this.viewerAxial, 'axial', this.handleDrag);
+        window.axialRenderer = this.axialRenderer;
+        this.coronalRenderer = new GpuRenderer(this.viewerCoronal, 'coronal', this.handleDrag);
+        this.sagittalRenderer = new GpuRenderer(this.viewerSagittal, 'sagittal', this.handleDrag);
       }
       const files = e.target.files;
       await this.loader.load(files);
@@ -89,14 +84,6 @@ class App {
       this.coronalRenderer.setVolume(this.seriesDicomData, sharedTexture);
       this.sagittalRenderer.setVolume(this.seriesDicomData, sharedTexture);
       this.renderAllViews();
-    });
-    this.cpuRendererBtn.addEventListener('click', () => {
-      this.cpuRendererBtn.classList.add('active');
-      this.gpuRendererBtn.classList.remove('active');
-    });
-    this.gpuRendererBtn.addEventListener('click', () => {
-      this.gpuRendererBtn.classList.add('active');
-      this.cpuRendererBtn.classList.remove('active');
     });
     this.windowCenterWindowWidthBtn.addEventListener('click', () => {
       this.windowCenterWindowWidthBtn.classList.add('active');

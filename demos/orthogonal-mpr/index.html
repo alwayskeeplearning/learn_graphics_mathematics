@@ -199,7 +199,7 @@
         display: flex;
       }
       .operation-item span {
-        width: 60px;
+        width: 75px;
         font-size: 11px;
       }
 
@@ -210,7 +210,7 @@
         color: #ff00ff;
       }
       .sagittal-label {
-        color: #00ff00;
+        color: #ffae00;
       }
     </style>
   </head>
@@ -243,9 +243,10 @@
             </div>
 
             <div class="operation-item">
-              <span>渲染方式</span>
-              <button id="cpu-renderer" class="btn">CPU</button>
-              <button id="gpu-renderer" class="btn active">GPU</button>
+              <span>MIP渲染方式</span>
+              <button id="max-mip" class="btn active">最大值</button>
+              <button id="min-mip" class="btn">最小值</button>
+              <button id="avg-mip" class="btn">平均值</button>
             </div>
 
             <div class="operation-item">
