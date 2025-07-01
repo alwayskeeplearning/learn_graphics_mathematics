@@ -206,7 +206,7 @@ class GpuRenderer {
     // --- 在此处填充 u_volume_size ---
     this.slicePlane.material.uniforms.u_volume_size.value.set(width, height, depth);
 
-    // --- Physical Scaling Logic (Deactivated by default) ---
+    // // --- Physical Scaling Logic (Deactivated by default) ---
     // const { pixelSpacing, sliceThickness } = metaData;
     // const physicalWidth = width * pixelSpacing[0];
     // const physicalHeight = height * pixelSpacing[1];
@@ -229,8 +229,8 @@ class GpuRenderer {
     // const maxDim = Math.max(aspectRatioX, aspectRatioY);
     // this.slicePlane.scale.x = aspectRatioX / maxDim;
     // this.slicePlane.scale.y = aspectRatioY / maxDim;
-    this.slicePlane.scale.x = 1;
-    this.slicePlane.scale.y = 1;
+    // this.slicePlane.scale.x = 1;
+    // this.slicePlane.scale.y = 1;
     // --- End of Physical Scaling Logic ---
 
     if (this.orientation === 'coronal') {
@@ -240,7 +240,7 @@ class GpuRenderer {
     } else {
       this.slicePlane.material.defines.AXIAL_VIEW = true;
     }
-
+    this.slicePlane.material.needsUpdate = true;
     return texture;
   }
   render(viewState) {
@@ -388,7 +388,6 @@ class GpuRenderer {
     this.handles.slab.rightVerticalTop.position.set(vRight, yPos + handlePosOffset, zOffset + 0.01);
     this.handles.slab.leftVerticalBottom.position.set(vLeft, yPos - handlePosOffset, zOffset + 0.01);
     this.handles.slab.rightVerticalBottom.position.set(vRight, yPos - handlePosOffset, zOffset + 0.01);
-    // }
     this.invalidate();
   }
   setupCrosshairs() {
@@ -590,23 +589,20 @@ class GpuRenderer {
       const mouse = this.getNormalizedMousePosition(event);
       this.raycaster.setFromCamera(mouse, this.camera);
       const intersects = this.raycaster.intersectObjects(this.hitboxGroup.children, true);
-
       Object.values(this.handles.slab).forEach(slabHandle => (slabHandle.visible = false));
-
       this.dragTarget = null;
       if (intersects.length > 0) {
         this.dragTarget = intersects[0].object.userData.type;
         console.log(this.dragTarget);
-
         // 根据悬停的对象类型，显示对应的手柄
-        if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'slab_horizontal_handle' || this.dragTarget === 'slab_horizontal_handle') {
+        if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'slab_horizontal_handle') {
           // 悬停在十字线的水平部分，显示水平方向的厚度手柄
           this.handles.slab.topHorizontalLeft.visible = true;
           this.handles.slab.topHorizontalRight.visible = true;
           this.handles.slab.bottomHorizontalLeft.visible = true;
           this.handles.slab.bottomHorizontalRight.visible = true;
           this.canvas.style.cursor = 'row-resize';
-        } else if (this.dragTarget === 'crosshairs_vertical_line' || this.dragTarget === 'slab_vertical_handle' || this.dragTarget === 'slab_vertical_handle') {
+        } else if (this.dragTarget === 'crosshairs_vertical_line' || this.dragTarget === 'slab_vertical_handle') {
           // 悬停在十字线的垂直部分，显示垂直方向的厚度手柄
           this.handles.slab.leftVerticalTop.visible = true;
           this.handles.slab.leftVerticalBottom.visible = true;
@@ -638,14 +634,11 @@ class GpuRenderer {
     this.invalidate();
     // 拖拽逻辑保持不变
     if (!this.isDragging || !this.dragTarget) return;
-
     const deltaX = event.clientX - this.lastMousePosition.x;
     const deltaY = event.clientY - this.lastMousePosition.y;
     this.lastMousePosition = { x: event.clientX, y: event.clientY };
-
     let changeHorizontal = null;
     let changeVertical = null;
-
     if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'center') {
       let target = '';
       let type = 'line';
@@ -672,7 +665,6 @@ class GpuRenderer {
       }
       changeVertical = { target, type, delta };
     }
-
     if (this.dragTarget === 'slab_horizontal_handle') {
       const normMouse = this.getNormalizedMousePosition(event);
       this.raycaster.setFromCamera(normMouse, this.camera);
@@ -680,8 +672,7 @@ class GpuRenderer {
       const worldMouse = new THREE.Vector3();
       this.raycaster.ray.intersectPlane(plane, worldMouse);
       const sign = Math.sign(worldMouse.y - this.yPos);
-      const worldDeltaY = (-deltaY / this.canvas.clientHeight) * sign;
-
+      const worldDeltaY = (-deltaY / this.canvas.clientHeight) * sign * (this.canvas.height / this.volume.metaData.height);
       let target = '';
       let type = 'handle';
       let delta = 0;
@@ -702,7 +693,7 @@ class GpuRenderer {
       const worldMouse = new THREE.Vector3();
       this.raycaster.ray.intersectPlane(plane, worldMouse);
       const sign = Math.sign(worldMouse.x - this.xPos);
-      const worldDeltaX = (deltaX / this.canvas.clientWidth) * sign;
+      const worldDeltaX = (deltaX / this.canvas.clientWidth) * sign * (this.canvas.width / this.volume.metaData.width);
       // const worldDeltaX = (deltaX / this.canvas.clientWidth) * sign* (this.camera.right - this.camera.left);
       let target = '';
       let type = 'handle';
@@ -718,7 +709,6 @@ class GpuRenderer {
       }
       changeVertical = { target, type, delta };
     }
-
     this.onStateChange({
       type: 'drag',
       changes: [changeHorizontal, changeVertical].filter(Boolean),

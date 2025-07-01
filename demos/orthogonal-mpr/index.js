@@ -1,5 +1,6 @@
 import Loader from './loader';
 import GpuRenderer from './renderer';
+import data from './data.json';
 
 const SCROLL_THRESHOLD = 5;
 
@@ -45,6 +46,7 @@ class App {
     this.axialThickness = document.getElementById('axial-thickness');
     this.coronalThickness = document.getElementById('coronal-thickness');
     this.sagittalThickness = document.getElementById('sagittal-thickness');
+    this.loadRemoteImageBtn = document.getElementById('load-remote-image');
     this.maxIPBtn = document.getElementById('max-ip');
     this.minIPBtn = document.getElementById('min-ip');
     this.avgIPBtn = document.getElementById('avg-ip');
@@ -160,6 +162,41 @@ class App {
       this.renderAllViews();
       this.updateViewState();
     });
+    this.loadRemoteImageBtn.addEventListener('click', async () => {
+      const fetchs = data.images.map(image => {
+        const url = `http://172.16.8.2:8000/${image.storagePath}`;
+        return fetch(url).then(res => res.arrayBuffer());
+      });
+      const arrayBuffers = await Promise.all(fetchs);
+      if (!this.axialRenderer) {
+        this.axialRenderer = new GpuRenderer(this.viewerAxial, 'axial', this.handleDrag);
+        this.coronalRenderer = new GpuRenderer(this.viewerCoronal, 'coronal', this.handleDrag);
+        this.sagittalRenderer = new GpuRenderer(this.viewerSagittal, 'sagittal', this.handleDrag);
+      }
+
+      await this.loader.loadArrayBuffers(arrayBuffers);
+      this.seriesDicomData = this.loader.seriesDicomData;
+
+      this.viewState.windowCenter = this.seriesDicomData.metaData.windowCenter;
+      this.viewState.windowWidth = this.seriesDicomData.metaData.windowWidth;
+      this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
+      this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
+      this.viewState.axialPosition = Math.floor(this.seriesDicomData.metaData.depth / 2);
+
+      this.axialPosition.max = this.seriesDicomData.metaData.depth - 1;
+      this.coronalPosition.max = this.seriesDicomData.metaData.height - 1;
+      this.sagittalPosition.max = this.seriesDicomData.metaData.width - 1;
+
+      this.axialThickness.max = this.seriesDicomData.metaData.depth - 1;
+      this.coronalThickness.max = this.seriesDicomData.metaData.height - 1;
+      this.sagittalThickness.max = this.seriesDicomData.metaData.width - 1;
+
+      this.updateViewState();
+      const sharedTexture = this.axialRenderer.setVolume(this.seriesDicomData);
+      this.coronalRenderer.setVolume(this.seriesDicomData, sharedTexture);
+      this.sagittalRenderer.setVolume(this.seriesDicomData, sharedTexture);
+      this.renderAllViews();
+    });
     window.addEventListener('mousedown', e => {
       this.isMouseDown = true;
       this.lastMouseX = e.clientX;
@@ -225,7 +262,6 @@ class App {
     //   coronal: metaData.width - 1,
     //   sagittal: metaData.height - 1,
     // };
-    console.log(this.viewState);
 
     stateUpdate.changes.forEach(({ target, type, delta }) => {
       if (!target || !type) return;
