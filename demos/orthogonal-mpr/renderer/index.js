@@ -1,3 +1,4 @@
+/* eslint-disable no-dupe-else-if */
 import * as THREE from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
@@ -5,6 +6,11 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { SLICE_VERTEX_SHADER, SLICE_FRAGMENT_SHADER } from './shaders';
 
 class GpuRenderer {
+  fps = 30;
+  interval = 1000 / this.fps;
+  lastRenderTime = 0;
+  isDirty = false;
+  renderRequested = false;
   // 容器
   container = null;
   // MPR方向：axial、coronal、sagittal
@@ -67,6 +73,10 @@ class GpuRenderer {
   dragTarget = null;
   // 上次鼠标位置
   lastMousePosition = { x: 0, y: 0 };
+  // 十字线水平线位置
+  xPos = 0;
+  // 十字线垂直线位置
+  yPos = 0;
 
   constructor(container, orientation = 'axial', onStateChange = () => {}) {
     this.container = container;
@@ -82,6 +92,7 @@ class GpuRenderer {
     const { width, height } = this.container.getBoundingClientRect();
     // 创建canvas
     this.canvas = document.createElement('canvas');
+    this.canvas.dataset.orientation = this.orientation;
     this.container.appendChild(this.canvas);
 
     // 创建场景
@@ -113,6 +124,7 @@ class GpuRenderer {
         u_rescaleIntercept: { value: 0.0 },
         u_slabThickness: { value: 0.0 },
         u_volume_size: { value: new THREE.Vector3(0, 0, 0) },
+        u_slabMode: { value: 0 },
       },
       glslVersion: THREE.GLSL3,
     });
@@ -233,18 +245,18 @@ class GpuRenderer {
   }
   render(viewState) {
     if (!this.volume) {
-      this.renderer.render(this.scene, this.camera);
+      this.invalidate();
       return;
     }
 
-    const { windowCenter, windowWidth } = viewState;
+    const { windowCenter, windowWidth, slabMode } = viewState;
     const { width, height, depth } = this.volume.metaData;
     const { axialPosition, coronalPosition, sagittalPosition, axialThickness, coronalThickness, sagittalThickness } = viewState;
     const uniforms = this.slicePlane.material.uniforms;
 
     uniforms.u_windowCenter.value = windowCenter;
     uniforms.u_windowWidth.value = windowWidth;
-
+    uniforms.u_slabMode.value = slabMode || 0;
     const { left, right, top, bottom } = this.camera;
     // 十字线中心点间距
     const gap = 0.05;
@@ -287,6 +299,8 @@ class GpuRenderer {
         break;
     }
 
+    this.xPos = xPos;
+    this.yPos = yPos;
     // 计算十字线位置
     const leftHPoints = [left, yPos, zOffset, xPos - gap, yPos, zOffset];
     const rightHPoints = [xPos + gap, yPos, zOffset, right, yPos, zOffset];
@@ -323,68 +337,59 @@ class GpuRenderer {
     this.lines.hitbox.slab.rightVerticalLine.visible = hasVerticalSlab;
 
     // --- 更新位置 ---
-    if (hasHorizontalSlab || hasVerticalSlab) {
-      let verticalOffset = 0;
-      let horizontalOffset = 0;
+    // if (hasHorizontalSlab || hasVerticalSlab) {
+    let verticalOffset = 0;
+    let horizontalOffset = 0;
 
-      // (偏移量计算逻辑不变)
-      if (this.orientation === 'axial') {
-        verticalOffset = verticalSlabThickness / 2 / width;
-        horizontalOffset = horizontalSlabThickness / 2 / height;
-      } else if (this.orientation === 'coronal') {
-        verticalOffset = verticalSlabThickness / 2 / width;
-        horizontalOffset = horizontalSlabThickness / 2 / depth;
-      } else {
-        // sagittal
-        verticalOffset = verticalSlabThickness / 2 / height;
-        horizontalOffset = horizontalSlabThickness / 2 / depth;
-      }
-
-      // 水平方向的贯穿线 (由 horizontalOffset 控制)
-      const hTop = yPos + horizontalOffset;
-      const hBottom = yPos - horizontalOffset;
-      // 更新MIP厚度水平辅助线和命中框水平辅助线位置
-      this.lines.display.slab.topHorizontalLine.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
-      this.lines.display.slab.bottomHorizontalLine.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
-      this.lines.hitbox.slab.topHorizontalLine.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
-      this.lines.hitbox.slab.bottomHorizontalLine.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
-
-      // 垂直方向的贯穿线 (由 verticalOffset 控制)
-      const vLeft = xPos - verticalOffset;
-      const vRight = xPos + verticalOffset;
-      // 更新MIP厚度垂直辅助线和命中框垂直辅助线位置
-      this.lines.display.slab.leftVerticalLine.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
-      this.lines.display.slab.rightVerticalLine.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
-      this.lines.hitbox.slab.leftVerticalLine.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
-      this.lines.hitbox.slab.rightVerticalLine.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
-
-      // 计算线段距离
-      this.lines.display.slab.topHorizontalLine.computeLineDistances();
-      this.lines.display.slab.bottomHorizontalLine.computeLineDistances();
-      this.lines.display.slab.leftVerticalLine.computeLineDistances();
-      this.lines.display.slab.rightVerticalLine.computeLineDistances();
-
-      // 更新手柄位置
-      const handlePosOffset = 0.2; // 调整手柄位置
-      this.handles.slab.topHorizontalLeft.position.set(xPos - handlePosOffset, hTop, zOffset + 0.01);
-      this.handles.slab.topHorizontalRight.position.set(xPos + handlePosOffset, hTop, zOffset + 0.01);
-      this.handles.slab.bottomHorizontalLeft.position.set(xPos - handlePosOffset, hBottom, zOffset + 0.01);
-      this.handles.slab.bottomHorizontalRight.position.set(xPos + handlePosOffset, hBottom, zOffset + 0.01);
-      this.handles.slab.leftVerticalTop.position.set(vLeft, yPos + handlePosOffset, zOffset + 0.01);
-      this.handles.slab.rightVerticalTop.position.set(vRight, yPos + handlePosOffset, zOffset + 0.01);
-      this.handles.slab.leftVerticalBottom.position.set(vLeft, yPos - handlePosOffset, zOffset + 0.01);
-      this.handles.slab.rightVerticalBottom.position.set(vRight, yPos - handlePosOffset, zOffset + 0.01);
-      // 更新手柄可见性
-      this.handles.slab.topHorizontalLeft.visible = hasHorizontalSlab;
-      this.handles.slab.topHorizontalRight.visible = hasHorizontalSlab;
-      this.handles.slab.bottomHorizontalLeft.visible = hasHorizontalSlab;
-      this.handles.slab.bottomHorizontalRight.visible = hasHorizontalSlab;
-      this.handles.slab.leftVerticalTop.visible = hasVerticalSlab;
-      this.handles.slab.leftVerticalBottom.visible = hasVerticalSlab;
-      this.handles.slab.rightVerticalTop.visible = hasVerticalSlab;
-      this.handles.slab.rightVerticalBottom.visible = hasVerticalSlab;
+    // (偏移量计算逻辑不变)
+    if (this.orientation === 'axial') {
+      verticalOffset = verticalSlabThickness / 2 / width;
+      horizontalOffset = horizontalSlabThickness / 2 / height;
+    } else if (this.orientation === 'coronal') {
+      verticalOffset = verticalSlabThickness / 2 / width;
+      horizontalOffset = horizontalSlabThickness / 2 / depth;
+    } else {
+      // sagittal
+      verticalOffset = verticalSlabThickness / 2 / height;
+      horizontalOffset = horizontalSlabThickness / 2 / depth;
     }
-    this.renderer.render(this.scene, this.camera);
+
+    // 水平方向的贯穿线 (由 horizontalOffset 控制)
+    const hTop = yPos + horizontalOffset;
+    const hBottom = yPos - horizontalOffset;
+    // 更新MIP厚度水平辅助线和命中框水平辅助线位置
+    this.lines.display.slab.topHorizontalLine.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
+    this.lines.display.slab.bottomHorizontalLine.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
+    this.lines.hitbox.slab.topHorizontalLine.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
+    this.lines.hitbox.slab.bottomHorizontalLine.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
+
+    // 垂直方向的贯穿线 (由 verticalOffset 控制)
+    const vLeft = xPos - verticalOffset;
+    const vRight = xPos + verticalOffset;
+    // 更新MIP厚度垂直辅助线和命中框垂直辅助线位置
+    this.lines.display.slab.leftVerticalLine.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
+    this.lines.display.slab.rightVerticalLine.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
+    this.lines.hitbox.slab.leftVerticalLine.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
+    this.lines.hitbox.slab.rightVerticalLine.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
+
+    // 计算线段距离
+    this.lines.display.slab.topHorizontalLine.computeLineDistances();
+    this.lines.display.slab.bottomHorizontalLine.computeLineDistances();
+    this.lines.display.slab.leftVerticalLine.computeLineDistances();
+    this.lines.display.slab.rightVerticalLine.computeLineDistances();
+
+    // 更新手柄位置
+    const handlePosOffset = 0.2; // 调整手柄位置
+    this.handles.slab.topHorizontalLeft.position.set(xPos - handlePosOffset, hTop, zOffset + 0.01);
+    this.handles.slab.topHorizontalRight.position.set(xPos + handlePosOffset, hTop, zOffset + 0.01);
+    this.handles.slab.bottomHorizontalLeft.position.set(xPos - handlePosOffset, hBottom, zOffset + 0.01);
+    this.handles.slab.bottomHorizontalRight.position.set(xPos + handlePosOffset, hBottom, zOffset + 0.01);
+    this.handles.slab.leftVerticalTop.position.set(vLeft, yPos + handlePosOffset, zOffset + 0.01);
+    this.handles.slab.rightVerticalTop.position.set(vRight, yPos + handlePosOffset, zOffset + 0.01);
+    this.handles.slab.leftVerticalBottom.position.set(vLeft, yPos - handlePosOffset, zOffset + 0.01);
+    this.handles.slab.rightVerticalBottom.position.set(vRight, yPos - handlePosOffset, zOffset + 0.01);
+    // }
+    this.invalidate();
   }
   setupCrosshairs() {
     // .axial-label { color: #00ffff; }   // 青色 - 轴状位
@@ -428,7 +433,7 @@ class GpuRenderer {
     const hitboxLineOptions = {
       linewidth: 8,
       transparent: true,
-      opacity: 0.2,
+      opacity: 0.0,
       resolution: new THREE.Vector2(width, height),
     };
 
@@ -484,7 +489,7 @@ class GpuRenderer {
     const hitboxLineOptions = {
       linewidth: 8,
       transparent: true,
-      opacity: 0.2,
+      opacity: 0.0,
       resolution: new THREE.Vector2(width, height),
     };
 
@@ -553,7 +558,7 @@ class GpuRenderer {
 
     this.canvas.addEventListener('mousedown', this.handleMouseDown);
     this.canvas.addEventListener('mousemove', this.handleMouseMove);
-    this.canvas.addEventListener('mouseup', this.handleMouseUp);
+    window.addEventListener('mouseup', this.handleMouseUp);
   }
   // 归一化鼠标坐标
   getNormalizedMousePosition(event) {
@@ -565,6 +570,8 @@ class GpuRenderer {
   }
   handleMouseDown(event) {
     event.preventDefault();
+    // 临时解决窗宽窗位等工具与拖拽的冲突
+    this.isUIDragging = true;
     // 只处理左键点击
     if (event.button !== 0) return;
 
@@ -574,30 +581,32 @@ class GpuRenderer {
 
     if (intersects.length > 0) {
       this.isDragging = true;
+      this.isUIDragging = false;
       this.lastMousePosition = { x: event.clientX, y: event.clientY };
     }
   }
   handleMouseMove(event) {
-    if (!this.isDragging) {
+    if (!this.isDragging && !this.isUIDragging) {
       const mouse = this.getNormalizedMousePosition(event);
       this.raycaster.setFromCamera(mouse, this.camera);
       const intersects = this.raycaster.intersectObjects(this.hitboxGroup.children, true);
 
       Object.values(this.handles.slab).forEach(slabHandle => (slabHandle.visible = false));
+
       this.dragTarget = null;
       if (intersects.length > 0) {
         this.dragTarget = intersects[0].object.userData.type;
         console.log(this.dragTarget);
 
         // 根据悬停的对象类型，显示对应的手柄
-        if (this.dragTarget === 'crosshairs_horizontal_line') {
+        if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'slab_horizontal_handle' || this.dragTarget === 'slab_horizontal_handle') {
           // 悬停在十字线的水平部分，显示水平方向的厚度手柄
           this.handles.slab.topHorizontalLeft.visible = true;
           this.handles.slab.topHorizontalRight.visible = true;
           this.handles.slab.bottomHorizontalLeft.visible = true;
           this.handles.slab.bottomHorizontalRight.visible = true;
           this.canvas.style.cursor = 'row-resize';
-        } else if (this.dragTarget === 'crosshairs_vertical_line') {
+        } else if (this.dragTarget === 'crosshairs_vertical_line' || this.dragTarget === 'slab_vertical_handle' || this.dragTarget === 'slab_vertical_handle') {
           // 悬停在十字线的垂直部分，显示垂直方向的厚度手柄
           this.handles.slab.leftVerticalTop.visible = true;
           this.handles.slab.leftVerticalBottom.visible = true;
@@ -626,7 +635,7 @@ class GpuRenderer {
         this.canvas.style.cursor = 'default';
       }
     }
-
+    this.invalidate();
     // 拖拽逻辑保持不变
     if (!this.isDragging || !this.dragTarget) return;
 
@@ -639,6 +648,7 @@ class GpuRenderer {
 
     if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'center') {
       let target = '';
+      let type = 'line';
       let delta = 0;
       if (this.orientation === 'axial') {
         target = 'coronal';
@@ -647,11 +657,11 @@ class GpuRenderer {
         target = 'axial';
         delta = deltaY;
       }
-      changeHorizontal = { target, delta };
+      changeHorizontal = { target, type, delta };
     }
-
     if (this.dragTarget === 'crosshairs_vertical_line' || this.dragTarget === 'center') {
       let target = '';
+      let type = 'line';
       let delta = 0;
       if (this.orientation === 'axial' || this.orientation === 'coronal') {
         target = 'sagittal';
@@ -660,7 +670,53 @@ class GpuRenderer {
         target = 'coronal';
         delta = deltaX;
       }
-      changeVertical = { target, delta };
+      changeVertical = { target, type, delta };
+    }
+
+    if (this.dragTarget === 'slab_horizontal_handle') {
+      const normMouse = this.getNormalizedMousePosition(event);
+      this.raycaster.setFromCamera(normMouse, this.camera);
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      const worldMouse = new THREE.Vector3();
+      this.raycaster.ray.intersectPlane(plane, worldMouse);
+      const sign = Math.sign(worldMouse.y - this.yPos);
+      const worldDeltaY = (-deltaY / this.canvas.clientHeight) * sign;
+
+      let target = '';
+      let type = 'handle';
+      let delta = 0;
+      if (this.orientation === 'axial') {
+        const thicknessDelta = worldDeltaY * 2 * this.volume.metaData.height;
+        target = 'coronal';
+        delta = thicknessDelta;
+      } else {
+        const thicknessDelta = worldDeltaY * 2 * this.volume.metaData.depth;
+        target = 'axial';
+        delta = thicknessDelta;
+      }
+      changeHorizontal = { target, type, delta };
+    } else if (this.dragTarget === 'slab_vertical_handle') {
+      const normMouse = this.getNormalizedMousePosition(event);
+      this.raycaster.setFromCamera(normMouse, this.camera);
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      const worldMouse = new THREE.Vector3();
+      this.raycaster.ray.intersectPlane(plane, worldMouse);
+      const sign = Math.sign(worldMouse.x - this.xPos);
+      const worldDeltaX = (deltaX / this.canvas.clientWidth) * sign;
+      // const worldDeltaX = (deltaX / this.canvas.clientWidth) * sign* (this.camera.right - this.camera.left);
+      let target = '';
+      let type = 'handle';
+      let delta = 0;
+      if (this.orientation === 'axial' || this.orientation === 'coronal') {
+        const thicknessDelta = worldDeltaX * 2 * this.volume.metaData.width;
+        target = 'sagittal';
+        delta = thicknessDelta;
+      } else {
+        const thicknessDelta = worldDeltaX * 2 * this.volume.metaData.height;
+        target = 'coronal';
+        delta = thicknessDelta;
+      }
+      changeVertical = { target, type, delta };
     }
 
     this.onStateChange({
@@ -670,7 +726,39 @@ class GpuRenderer {
   }
   handleMouseUp() {
     this.isDragging = false;
+    this.isUIDragging = false;
     this.dragTarget = null;
+  }
+  invalidate() {
+    this.isDirty = true;
+    this._requestRender();
+  }
+  _requestRender() {
+    if (!this.renderRequested) {
+      this.renderRequested = true;
+      requestAnimationFrame(() => this._performRender());
+    }
+  }
+  _performRender() {
+    this.renderRequested = false; // 允许下一帧的渲染请求
+
+    const now = performance.now();
+    // 计算距离上次渲染的时间间隔
+    const elapsed = now - this.lastRenderTime;
+
+    // 只有当场景是"脏"的，并且距离上次渲染的时间间隔已足够长，才执行绘制
+    if (this.isDirty && elapsed >= this.interval) {
+      // 校准时间，防止长时间卡顿后连续渲染
+      this.lastRenderTime = now - (elapsed % this.interval);
+
+      this.renderer.render(this.scene, this.camera);
+      this.isDirty = false;
+    }
+    // 如果因为时间未到而跳过了本次渲染，但场景仍然是"脏"的，
+    // 我们需要再次请求下一帧，以确保它最终会被画出来。
+    if (this.isDirty) {
+      this._requestRender();
+    }
   }
 }
 

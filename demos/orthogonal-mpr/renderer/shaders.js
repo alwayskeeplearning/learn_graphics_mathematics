@@ -19,6 +19,7 @@ const SLICE_FRAGMENT_SHADER = `
   uniform float u_sliceCount;
   uniform float u_slabThickness;
   uniform vec3 u_volume_size;
+  uniform int u_slabMode; // 0: MaxIP, 1: MinIP, 2: AvgIP
 
   varying vec2 v_texCoord;
 
@@ -64,6 +65,9 @@ const SLICE_FRAGMENT_SHADER = `
       rawValue = texture(u_texture, texCoord).r;
     } else {
       float maxValue = -99999.0;
+      float minValue = 99999.0;
+      float sumValue = 0.0;
+      int sampleCount = 0;
       int thickness = int(u_slabThickness) / 2;
       
       for (int i = -thickness; i <= thickness; i++) {
@@ -87,9 +91,24 @@ const SLICE_FRAGMENT_SHADER = `
         if (current_slice_offset >= 0.0 && current_slice_offset <= 1.0) {
           float sampledValue = texture(u_texture, sample_coord).r;
           maxValue = max(maxValue, sampledValue);
+          minValue = min(minValue, sampledValue);
+          sumValue += sampledValue;
+          sampleCount++;
         }
       }
-      rawValue = maxValue;
+
+      if (sampleCount > 0) {
+        if (u_slabMode == 1) { // MinIP
+          rawValue = minValue;
+        } else if (u_slabMode == 2) { // AvgIP
+          rawValue = sumValue / float(sampleCount);
+        } else { // MaxIP (默认)
+          rawValue = maxValue;
+        }
+      } else {
+        // 如果没有采样到任何点（例如，切片完全在体数据之外）
+        rawValue = -99999.0; // 或者一个合适的默认值
+      }
     }
 
     out_FragColor = vec4(vec3(applyWindow(rawValue)), 1.0);

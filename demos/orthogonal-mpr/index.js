@@ -1,7 +1,7 @@
 import Loader from './loader';
 import GpuRenderer from './renderer';
 
-// const SCROLL_THRESHOLD = 5;
+const SCROLL_THRESHOLD = 5;
 
 class App {
   constructor() {
@@ -18,6 +18,7 @@ class App {
       axialThickness: 0,
       coronalThickness: 0,
       sagittalThickness: 0,
+      slabMode: 0,
     };
     this.loader = new Loader();
     this.axialRenderer = null;
@@ -44,7 +45,9 @@ class App {
     this.axialThickness = document.getElementById('axial-thickness');
     this.coronalThickness = document.getElementById('coronal-thickness');
     this.sagittalThickness = document.getElementById('sagittal-thickness');
-    this.gpuRendererBtn = document.getElementById('gpu-renderer');
+    this.maxIPBtn = document.getElementById('max-ip');
+    this.minIPBtn = document.getElementById('min-ip');
+    this.avgIPBtn = document.getElementById('avg-ip');
     this.windowCenterWindowWidthBtn = document.getElementById('window-center-window-width');
     this.multiLayerScrollBtn = document.getElementById('multi-layer-scroll');
     this.viewerAxial = document.getElementById('viewer-axial');
@@ -57,7 +60,6 @@ class App {
     this.fileInput.addEventListener('change', async e => {
       if (!this.axialRenderer) {
         this.axialRenderer = new GpuRenderer(this.viewerAxial, 'axial', this.handleDrag);
-        window.axialRenderer = this.axialRenderer;
         this.coronalRenderer = new GpuRenderer(this.viewerCoronal, 'coronal', this.handleDrag);
         this.sagittalRenderer = new GpuRenderer(this.viewerSagittal, 'sagittal', this.handleDrag);
       }
@@ -134,41 +136,76 @@ class App {
       this.updateViewState();
     });
     window.addEventListener('resize', this.handleResize.bind(this));
-    // window.addEventListener('mousedown', e => {
-    //   this.isMouseDown = true;
-    //   this.lastMouseX = e.clientX;
-    //   this.lastMouseY = e.clientY;
-    // });
-    // window.addEventListener('mousemove', e => {
-    //   if (!this.isMouseDown) return;
-    //   const deltaX = e.pageX - this.lastMouseX;
-    //   const deltaY = e.pageY - this.lastMouseY;
-    //   this.lastMouseX = e.pageX;
-    //   this.lastMouseY = e.pageY;
-    //   if (this.windowCenterWindowWidthBtn.classList.contains('active')) {
-    //     this.viewState.windowCenter += deltaX * 1;
-    //     this.viewState.windowWidth += deltaY * 1;
-    //     if (this.viewState.windowWidth < 1) this.viewState.windowWidth = 1;
+    this.maxIPBtn.addEventListener('click', () => {
+      this.viewState.slabMode = 0;
+      this.maxIPBtn.classList.add('active');
+      this.minIPBtn.classList.remove('active');
+      this.avgIPBtn.classList.remove('active');
+      this.renderAllViews();
+      this.updateViewState();
+    });
+    this.minIPBtn.addEventListener('click', () => {
+      this.viewState.slabMode = 1;
+      this.maxIPBtn.classList.remove('active');
+      this.minIPBtn.classList.add('active');
+      this.avgIPBtn.classList.remove('active');
+      this.renderAllViews();
+      this.updateViewState();
+    });
+    this.avgIPBtn.addEventListener('click', () => {
+      this.viewState.slabMode = 2;
+      this.maxIPBtn.classList.remove('active');
+      this.minIPBtn.classList.remove('active');
+      this.avgIPBtn.classList.add('active');
+      this.renderAllViews();
+      this.updateViewState();
+    });
+    window.addEventListener('mousedown', e => {
+      this.isMouseDown = true;
+      this.lastMouseX = e.clientX;
+      this.lastMouseY = e.clientY;
+    });
+    window.addEventListener('mousemove', e => {
+      if (!this.isMouseDown || this.hasDragTarget()) return;
+      const deltaX = e.pageX - this.lastMouseX;
+      const deltaY = e.pageY - this.lastMouseY;
+      this.lastMouseX = e.pageX;
+      this.lastMouseY = e.pageY;
+      if (this.windowCenterWindowWidthBtn.classList.contains('active')) {
+        this.viewState.windowCenter += deltaX * 1;
+        this.viewState.windowWidth += deltaY * 1;
+        if (this.viewState.windowWidth < 1) this.viewState.windowWidth = 1;
 
-    //     this.updateViewState();
-    //   } else if (this.multiLayerScrollBtn.classList.contains('active')) {
-    //     this.scrollAccumulator -= deltaY;
-    //     if (Math.abs(this.scrollAccumulator) >= SCROLL_THRESHOLD) {
-    //       const sliceChange = Math.floor(this.scrollAccumulator / SCROLL_THRESHOLD);
-    //       this.viewState.sliceIndex -= sliceChange;
-    //       this.scrollAccumulator %= SCROLL_THRESHOLD;
-    //       const { depth } = this.seriesDicomData.metaData;
-    //       this.viewState.sliceIndex = Math.max(0, Math.min(this.viewState.sliceIndex, depth - 1));
-    //     }
-    //     this.updateViewState();
-    //   }
-    //   if (this.currentRenderer) {
-    //     this.currentRenderer.render(this.viewState);
-    //   }
-    // });
-    // window.addEventListener('mouseup', () => {
-    //   this.isMouseDown = false;
-    // });
+        this.updateViewState();
+      } else if (this.multiLayerScrollBtn.classList.contains('active')) {
+        this.scrollAccumulator -= deltaY;
+        if (Math.abs(this.scrollAccumulator) >= SCROLL_THRESHOLD) {
+          const sliceChange = Math.floor(this.scrollAccumulator / SCROLL_THRESHOLD);
+          if (e.target.dataset.orientation === 'axial') {
+            this.viewState.axialPosition -= sliceChange;
+          } else if (e.target.dataset.orientation === 'coronal') {
+            this.viewState.coronalPosition -= sliceChange;
+          } else if (e.target.dataset.orientation === 'sagittal') {
+            this.viewState.sagittalPosition -= sliceChange;
+          }
+          this.scrollAccumulator %= SCROLL_THRESHOLD;
+          const { width, height, depth } = this.seriesDicomData.metaData;
+          this.viewState.axialPosition = Math.max(0, Math.min(this.viewState.axialPosition, depth - 1));
+          this.viewState.coronalPosition = Math.max(0, Math.min(this.viewState.coronalPosition, height - 1));
+          this.viewState.sagittalPosition = Math.max(0, Math.min(this.viewState.sagittalPosition, width - 1));
+        }
+        this.updateViewState();
+      }
+      if (this.axialRenderer) {
+        this.renderAllViews();
+      }
+    });
+    window.addEventListener('mouseup', () => {
+      this.isMouseDown = false;
+    });
+  }
+  hasDragTarget() {
+    return this.axialRenderer?.dragTarget || this.coronalRenderer?.dragTarget || this.sagittalRenderer?.dragTarget;
   }
   handleResize() {
     if (this.axialRenderer && this.coronalRenderer && this.sagittalRenderer) {
@@ -188,11 +225,15 @@ class App {
     //   coronal: metaData.width - 1,
     //   sagittal: metaData.height - 1,
     // };
+    console.log(this.viewState);
 
-    stateUpdate.changes.forEach(({ target, delta }) => {
-      console.log('axis', target, delta);
-
-      if (!target) return;
+    stateUpdate.changes.forEach(({ target, type, delta }) => {
+      if (!target || !type) return;
+      if (type === 'handle') {
+        const thicknessKey = `${target}Thickness`;
+        this.viewState[thicknessKey] = Number(this.viewState[thicknessKey]) + Math.round(delta);
+        return;
+      }
       const posKey = `${target}Position`;
       let newPosition = Number(this.viewState[posKey]) + delta;
       // newPosition = Math.max(0, Math.min(maxPositions[target], newPosition));
