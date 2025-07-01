@@ -71,8 +71,16 @@ class GpuRenderer {
   isDragging = false;
   // 拖拽目标
   dragTarget = null;
-  // 上次鼠标位置
-  lastMousePosition = { x: 0, y: 0 };
+  // 拖拽起始鼠标位置 (世界坐标)
+  dragStartPosition = new THREE.Vector3();
+  // 拖拽起始时视图状态
+  dragStartViewState = null;
+  // 是否正在进行resize
+  isResizing = false;
+  // resize结束的debounce定时器
+  resizeEndDebounceTimer = null;
+  // 当前视图状态
+  viewState = null;
   // 十字线水平线位置
   xPos = 0;
   // 十字线垂直线位置
@@ -140,27 +148,54 @@ class GpuRenderer {
     document.removeEventListener('mouseup', this.handleMouseUp);
   }
   resize() {
+    this.isResizing = true;
+    if (this.resizeEndDebounceTimer) {
+      clearTimeout(this.resizeEndDebounceTimer);
+    }
+    this.resizeEndDebounceTimer = setTimeout(() => {
+      this.isResizing = false;
+    }, 100); // 如果100毫秒内没有新的resize事件，就认为resize结束了
+
     const { width, height } = this.container.getBoundingClientRect();
     this.renderer.setSize(width, height);
-    const aspect = width / height;
-    this.camera.left = -aspect / 2;
-    this.camera.right = aspect / 2;
-    this.camera.top = 0.5;
-    this.camera.bottom = -0.5;
-    this.camera.updateProjectionMatrix();
-    if (this.horizontalLineMaterial && this.verticalLineMaterial) {
-      this.horizontalLineMaterial.resolution.set(width, height);
-      this.verticalLineMaterial.resolution.set(width, height);
-      this.hitboxHMaterial.resolution.set(width, height);
-      this.hitboxVMaterial.resolution.set(width, height);
+    const viewportAspect = width / height;
 
-      // --- 新增：更新所有虚线材质的分辨率 ---
-      Object.values(this.lines.slab).forEach(line => {
-        if (line.material) {
-          line.material.resolution.set(width, height);
-        }
-      });
+    // 正确的、通用的相机自适应逻辑
+    // 1. 获取内容的实际世界尺寸
+    const contentWidth = this.slicePlane.scale.x;
+    const contentHeight = this.slicePlane.scale.y;
+    const contentAspect = contentWidth / contentHeight;
+
+    // 2. 比较窗口和内容的宽高比，确定是左右留黑还是上下留黑
+    if (viewportAspect > contentAspect) {
+      // 情况1：窗口比内容更"宽"，以内容高度为基准，左右留黑 (Pillarbox)
+      const cameraHeight = contentHeight;
+      const cameraWidth = cameraHeight * viewportAspect;
+      this.camera.top = cameraHeight / 2;
+      this.camera.bottom = -cameraHeight / 2;
+      this.camera.left = -cameraWidth / 2;
+      this.camera.right = cameraWidth / 2;
+    } else {
+      // 情况2：窗口比内容更"高"，以内容宽度为基准，上下留黑 (Letterbox)
+      const cameraWidth = contentWidth;
+      const cameraHeight = cameraWidth / viewportAspect;
+      this.camera.left = -cameraWidth / 2;
+      this.camera.right = cameraWidth / 2;
+      this.camera.top = cameraHeight / 2;
+      this.camera.bottom = -cameraHeight / 2;
     }
+
+    this.camera.updateProjectionMatrix();
+
+    // --- 修正：确保所有线条材质的分辨率都能被正确更新 ---
+    const allLineMaterials = [this.crosshairsHorizontalLineMaterial, this.crosshairsVerticalLineMaterial, this.hitboxCrosshairsHorizontalLineMaterial, this.hitboxCrosshairsVerticalLineMaterial, this.slabHorizontalLineMaterial, this.slabVerticalLineMaterial, this.hitboxSlabHorizontalLineMaterial, this.hitboxSlabVerticalLineMaterial];
+
+    allLineMaterials.forEach(material => {
+      if (material) {
+        material.resolution.set(width, height);
+      }
+    });
+    this.invalidate(); // 请求一次渲染来启动循环
   }
   setVolume(seriesDicomData, texture3D) {
     this.volume = seriesDicomData;
@@ -229,8 +264,8 @@ class GpuRenderer {
     // const maxDim = Math.max(aspectRatioX, aspectRatioY);
     // this.slicePlane.scale.x = aspectRatioX / maxDim;
     // this.slicePlane.scale.y = aspectRatioY / maxDim;
-    // this.slicePlane.scale.x = 1;
-    // this.slicePlane.scale.y = 1;
+    this.slicePlane.scale.x = 1;
+    this.slicePlane.scale.y = 1;
     // --- End of Physical Scaling Logic ---
 
     if (this.orientation === 'coronal') {
@@ -244,6 +279,7 @@ class GpuRenderer {
     return texture;
   }
   render(viewState) {
+    this.viewState = viewState; // Keep track of the current state
     if (!this.volume) {
       this.invalidate();
       return;
@@ -298,7 +334,8 @@ class GpuRenderer {
         horizontalSlabThickness = viewState.axialThickness || 0.0; // 水平线(轴状位)代表Y轴
         break;
     }
-
+    xPos = xPos * this.slicePlane.scale.x;
+    yPos = yPos * this.slicePlane.scale.y;
     this.xPos = xPos;
     this.yPos = yPos;
     // 计算十字线位置
@@ -321,7 +358,6 @@ class GpuRenderer {
 
     // 更新命中框中心点位置
     this.lines.hitbox.center.position.set(xPos, yPos, zOffset);
-
     // 更新MIP厚度水平/垂直辅助线可见性
     const hasVerticalSlab = verticalSlabThickness > 0.0;
     const hasHorizontalSlab = horizontalSlabThickness > 0.0;
@@ -355,8 +391,8 @@ class GpuRenderer {
     }
 
     // 水平方向的贯穿线 (由 horizontalOffset 控制)
-    const hTop = yPos + horizontalOffset;
-    const hBottom = yPos - horizontalOffset;
+    const hTop = yPos + horizontalOffset * this.slicePlane.scale.y;
+    const hBottom = yPos - horizontalOffset * this.slicePlane.scale.y;
     // 更新MIP厚度水平辅助线和命中框水平辅助线位置
     this.lines.display.slab.topHorizontalLine.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
     this.lines.display.slab.bottomHorizontalLine.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
@@ -364,8 +400,8 @@ class GpuRenderer {
     this.lines.hitbox.slab.bottomHorizontalLine.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
 
     // 垂直方向的贯穿线 (由 verticalOffset 控制)
-    const vLeft = xPos - verticalOffset;
-    const vRight = xPos + verticalOffset;
+    const vLeft = xPos - verticalOffset * this.slicePlane.scale.x;
+    const vRight = xPos + verticalOffset * this.slicePlane.scale.x;
     // 更新MIP厚度垂直辅助线和命中框垂直辅助线位置
     this.lines.display.slab.leftVerticalLine.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
     this.lines.display.slab.rightVerticalLine.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
@@ -430,7 +466,7 @@ class GpuRenderer {
 
     // 命中框十字线材质 较宽的hitbox便于鼠标悬停检测
     const hitboxLineOptions = {
-      linewidth: 8,
+      linewidth: 10,
       transparent: true,
       opacity: 0.0,
       resolution: new THREE.Vector2(width, height),
@@ -486,15 +522,15 @@ class GpuRenderer {
 
     // 命中框厚度辅助线材质 较宽的hitbox便于鼠标悬停检测
     const hitboxLineOptions = {
-      linewidth: 8,
+      linewidth: 10,
       transparent: true,
       opacity: 0.0,
       resolution: new THREE.Vector2(width, height),
     };
 
     // 厚度手柄大小
-    const handleSize = 0.02;
-    const handleGeometry = new THREE.PlaneGeometry(handleSize, handleSize);
+    const handleSize = 0.018;
+    const handleGeometry = new THREE.PlaneGeometry(handleSize + 0.002, handleSize);
 
     const slabHorizontalHandleMaterial = new THREE.MeshBasicMaterial({ color: this.crosshairsHorizontalLineMaterial.color, transparent: true, opacity: 0.7 });
     const slabVerticalHandleMaterial = new THREE.MeshBasicMaterial({ color: this.crosshairsVerticalLineMaterial.color, transparent: true, opacity: 0.7 });
@@ -581,7 +617,12 @@ class GpuRenderer {
     if (intersects.length > 0) {
       this.isDragging = true;
       this.isUIDragging = false;
-      this.lastMousePosition = { x: event.clientX, y: event.clientY };
+      this.dragTarget = intersects[0].object.userData.type;
+
+      // 将屏幕坐标转换为世界坐标并存储
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      this.raycaster.ray.intersectPlane(plane, this.dragStartPosition);
+      this.dragStartViewState = { ...this.viewState }; // Store a copy of the state at drag start
     }
   }
   handleMouseMove(event) {
@@ -593,7 +634,7 @@ class GpuRenderer {
       this.dragTarget = null;
       if (intersects.length > 0) {
         this.dragTarget = intersects[0].object.userData.type;
-        console.log(this.dragTarget);
+        // console.log(this.dragTarget);
         // 根据悬停的对象类型，显示对应的手柄
         if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'slab_horizontal_handle') {
           // 悬停在十字线的水平部分，显示水平方向的厚度手柄
@@ -634,79 +675,99 @@ class GpuRenderer {
     this.invalidate();
     // 拖拽逻辑保持不变
     if (!this.isDragging || !this.dragTarget) return;
-    const deltaX = event.clientX - this.lastMousePosition.x;
-    const deltaY = event.clientY - this.lastMousePosition.y;
-    this.lastMousePosition = { x: event.clientX, y: event.clientY };
+
+    // 获取当前鼠标位置的世界坐标
+    const normMouse = this.getNormalizedMousePosition(event);
+    this.raycaster.setFromCamera(normMouse, this.camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    const worldMouse = new THREE.Vector3();
+    this.raycaster.ray.intersectPlane(plane, worldMouse);
+
     let changeHorizontal = null;
     let changeVertical = null;
     if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'center') {
+      const totalDeltaWorldY = worldMouse.y - this.dragStartPosition.y;
       let target = '';
       let type = 'line';
-      let delta = 0;
+      let sliceCountForY, startPosition, currentPosition;
+
       if (this.orientation === 'axial') {
         target = 'coronal';
-        delta = deltaY;
+        sliceCountForY = this.volume.metaData.height;
+        startPosition = this.dragStartViewState.coronalPosition;
+        currentPosition = this.viewState.coronalPosition;
       } else {
+        // coronal or sagittal
         target = 'axial';
-        delta = deltaY;
+        sliceCountForY = this.volume.metaData.depth;
+        startPosition = this.dragStartViewState.axialPosition;
+        currentPosition = this.viewState.axialPosition;
       }
+
+      // 从世界坐标yPos反推切片位置: coronalPosition = (0.5 - yPos) * (height - 1)
+      // 因此 deltaCoronal = -deltaY * (sliceCount - 1)
+      const positionChange = (-totalDeltaWorldY / this.slicePlane.scale.y) * (sliceCountForY - 1);
+      const newPosition = startPosition + positionChange;
+      const delta = newPosition - currentPosition;
       changeHorizontal = { target, type, delta };
     }
     if (this.dragTarget === 'crosshairs_vertical_line' || this.dragTarget === 'center') {
+      const totalDeltaWorldX = worldMouse.x - this.dragStartPosition.x;
       let target = '';
       let type = 'line';
-      let delta = 0;
+      let sliceCountForX, startPosition, currentPosition;
+
       if (this.orientation === 'axial' || this.orientation === 'coronal') {
         target = 'sagittal';
-        delta = deltaX;
+        sliceCountForX = this.volume.metaData.width;
+        startPosition = this.dragStartViewState.sagittalPosition;
+        currentPosition = this.viewState.sagittalPosition;
       } else {
+        // sagittal
         target = 'coronal';
-        delta = deltaX;
+        sliceCountForX = this.volume.metaData.height;
+        startPosition = this.dragStartViewState.coronalPosition;
+        currentPosition = this.viewState.coronalPosition;
       }
+      // 从世界坐标xPos反推切片位置: sagittalPosition = (xPos + 0.5) * (width - 1)
+      // 因此 deltaSagittal = deltaX * (sliceCount - 1)
+      const positionChange = (totalDeltaWorldX / this.slicePlane.scale.x) * (sliceCountForX - 1);
+      const newPosition = startPosition + positionChange;
+      const delta = newPosition - currentPosition;
       changeVertical = { target, type, delta };
     }
     if (this.dragTarget === 'slab_horizontal_handle') {
-      const normMouse = this.getNormalizedMousePosition(event);
-      this.raycaster.setFromCamera(normMouse, this.camera);
-      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-      const worldMouse = new THREE.Vector3();
-      this.raycaster.ray.intersectPlane(plane, worldMouse);
-      const sign = Math.sign(worldMouse.y - this.yPos);
-      const worldDeltaY = (-deltaY / this.canvas.clientHeight) * sign * (this.canvas.height / this.volume.metaData.height);
       let target = '';
-      let type = 'handle';
-      let delta = 0;
+      const type = 'handle';
+      let currentThickness, sliceCount;
       if (this.orientation === 'axial') {
-        const thicknessDelta = worldDeltaY * 2 * this.volume.metaData.height;
         target = 'coronal';
-        delta = thicknessDelta;
+        sliceCount = this.volume.metaData.height;
+        currentThickness = this.viewState.coronalThickness;
       } else {
-        const thicknessDelta = worldDeltaY * 2 * this.volume.metaData.depth;
         target = 'axial';
-        delta = thicknessDelta;
+        sliceCount = this.volume.metaData.depth;
+        currentThickness = this.viewState.axialThickness;
       }
+      const newThickness = (Math.abs(worldMouse.y - this.yPos) / this.slicePlane.scale.y) * (sliceCount - 1) * 2;
+      const delta = newThickness - currentThickness;
       changeHorizontal = { target, type, delta };
     } else if (this.dragTarget === 'slab_vertical_handle') {
-      const normMouse = this.getNormalizedMousePosition(event);
-      this.raycaster.setFromCamera(normMouse, this.camera);
-      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-      const worldMouse = new THREE.Vector3();
-      this.raycaster.ray.intersectPlane(plane, worldMouse);
-      const sign = Math.sign(worldMouse.x - this.xPos);
-      const worldDeltaX = (deltaX / this.canvas.clientWidth) * sign * (this.canvas.width / this.volume.metaData.width);
-      // const worldDeltaX = (deltaX / this.canvas.clientWidth) * sign* (this.camera.right - this.camera.left);
       let target = '';
-      let type = 'handle';
-      let delta = 0;
+      const type = 'handle';
+      let currentThickness, sliceCount;
+
       if (this.orientation === 'axial' || this.orientation === 'coronal') {
-        const thicknessDelta = worldDeltaX * 2 * this.volume.metaData.width;
         target = 'sagittal';
-        delta = thicknessDelta;
+        sliceCount = this.volume.metaData.width;
+        currentThickness = this.viewState.sagittalThickness;
       } else {
-        const thicknessDelta = worldDeltaX * 2 * this.volume.metaData.height;
         target = 'coronal';
-        delta = thicknessDelta;
+        sliceCount = this.volume.metaData.height;
+        currentThickness = this.viewState.coronalThickness;
       }
+      const newThickness = (Math.abs(worldMouse.x - this.xPos) / this.slicePlane.scale.x) * (sliceCount - 1) * 2;
+      const delta = newThickness - currentThickness;
       changeVertical = { target, type, delta };
     }
     this.onStateChange({
@@ -731,6 +792,12 @@ class GpuRenderer {
   }
   _performRender() {
     this.renderRequested = false; // 允许下一帧的渲染请求
+
+    if (this.isResizing) {
+      this.renderer.render(this.scene, this.camera);
+      this._requestRender(); // 在resizing期间，持续请求下一帧
+      return;
+    }
 
     const now = performance.now();
     // 计算距离上次渲染的时间间隔

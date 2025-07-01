@@ -2,7 +2,7 @@ import Loader from './loader';
 import GpuRenderer from './renderer';
 import data from './data.json';
 
-const SCROLL_THRESHOLD = 5;
+const SCROLL_THRESHOLD = 3;
 
 class App {
   constructor() {
@@ -38,14 +38,6 @@ class App {
     this.axialThicknessValue = document.getElementById('axial-thickness-value');
     this.coronalThicknessValue = document.getElementById('coronal-thickness-value');
     this.sagittalThicknessValue = document.getElementById('sagittal-thickness-value');
-    this.windowWidth = document.getElementById('window-width');
-    this.windowCenter = document.getElementById('window-center');
-    this.axialPosition = document.getElementById('axial-position');
-    this.coronalPosition = document.getElementById('coronal-position');
-    this.sagittalPosition = document.getElementById('sagittal-position');
-    this.axialThickness = document.getElementById('axial-thickness');
-    this.coronalThickness = document.getElementById('coronal-thickness');
-    this.sagittalThickness = document.getElementById('sagittal-thickness');
     this.loadRemoteImageBtn = document.getElementById('load-remote-image');
     this.maxIPBtn = document.getElementById('max-ip');
     this.minIPBtn = document.getElementById('min-ip');
@@ -62,6 +54,7 @@ class App {
     this.fileInput.addEventListener('change', async e => {
       if (!this.axialRenderer) {
         this.axialRenderer = new GpuRenderer(this.viewerAxial, 'axial', this.handleDrag);
+        window.axialRenderer = this.axialRenderer;
         this.coronalRenderer = new GpuRenderer(this.viewerCoronal, 'coronal', this.handleDrag);
         this.sagittalRenderer = new GpuRenderer(this.viewerSagittal, 'sagittal', this.handleDrag);
       }
@@ -74,14 +67,6 @@ class App {
       this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
       this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
       this.viewState.axialPosition = Math.floor(this.seriesDicomData.metaData.depth / 2);
-
-      this.axialPosition.max = this.seriesDicomData.metaData.depth - 1;
-      this.coronalPosition.max = this.seriesDicomData.metaData.height - 1;
-      this.sagittalPosition.max = this.seriesDicomData.metaData.width - 1;
-
-      this.axialThickness.max = this.seriesDicomData.metaData.depth - 1;
-      this.coronalThickness.max = this.seriesDicomData.metaData.height - 1;
-      this.sagittalThickness.max = this.seriesDicomData.metaData.width - 1;
 
       this.updateViewState();
       const sharedTexture = this.axialRenderer.setVolume(this.seriesDicomData);
@@ -96,46 +81,6 @@ class App {
     this.multiLayerScrollBtn.addEventListener('click', () => {
       this.multiLayerScrollBtn.classList.add('active');
       this.windowCenterWindowWidthBtn.classList.remove('active');
-    });
-    this.axialPosition.addEventListener('input', e => {
-      this.viewState.axialPosition = e.target.value;
-      this.renderAllViews();
-      this.updateViewState();
-    });
-    this.coronalPosition.addEventListener('input', e => {
-      this.viewState.coronalPosition = e.target.value;
-      this.renderAllViews();
-      this.updateViewState();
-    });
-    this.sagittalPosition.addEventListener('input', e => {
-      this.viewState.sagittalPosition = e.target.value;
-      this.renderAllViews();
-      this.updateViewState();
-    });
-    this.windowWidth.addEventListener('input', e => {
-      this.viewState.windowWidth = e.target.value;
-      this.renderAllViews();
-      this.updateViewState();
-    });
-    this.windowCenter.addEventListener('input', e => {
-      this.viewState.windowCenter = e.target.value;
-      this.renderAllViews();
-      this.updateViewState();
-    });
-    this.axialThickness.addEventListener('input', e => {
-      this.viewState.axialThickness = Number(e.target.value);
-      this.renderAllViews();
-      this.updateViewState();
-    });
-    this.coronalThickness.addEventListener('input', e => {
-      this.viewState.coronalThickness = Number(e.target.value);
-      this.renderAllViews();
-      this.updateViewState();
-    });
-    this.sagittalThickness.addEventListener('input', e => {
-      this.viewState.sagittalThickness = Number(e.target.value);
-      this.renderAllViews();
-      this.updateViewState();
     });
     window.addEventListener('resize', this.handleResize.bind(this));
     this.maxIPBtn.addEventListener('click', () => {
@@ -182,14 +127,6 @@ class App {
       this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
       this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
       this.viewState.axialPosition = Math.floor(this.seriesDicomData.metaData.depth / 2);
-
-      this.axialPosition.max = this.seriesDicomData.metaData.depth - 1;
-      this.coronalPosition.max = this.seriesDicomData.metaData.height - 1;
-      this.sagittalPosition.max = this.seriesDicomData.metaData.width - 1;
-
-      this.axialThickness.max = this.seriesDicomData.metaData.depth - 1;
-      this.coronalThickness.max = this.seriesDicomData.metaData.height - 1;
-      this.sagittalThickness.max = this.seriesDicomData.metaData.width - 1;
 
       this.updateViewState();
       const sharedTexture = this.axialRenderer.setVolume(this.seriesDicomData);
@@ -256,13 +193,6 @@ class App {
   handleDrag(stateUpdate) {
     if (stateUpdate.type !== 'drag' || !this.seriesDicomData) return;
 
-    // const { metaData } = this.seriesDicomData;
-    // const maxPositions = {
-    //   axial: metaData.depth - 1,
-    //   coronal: metaData.width - 1,
-    //   sagittal: metaData.height - 1,
-    // };
-
     stateUpdate.changes.forEach(({ target, type, delta }) => {
       if (!target || !type) return;
       if (type === 'handle') {
@@ -292,9 +222,6 @@ class App {
     this.sagittalPositionValue.textContent = Math.min(this.viewState.sagittalPosition, this.seriesDicomData.metaData.height - 1);
     this.windowCenterValue.textContent = this.viewState.windowCenter;
     this.windowWidthValue.textContent = this.viewState.windowWidth;
-    this.axialPosition.value = Math.min(this.viewState.axialPosition, this.seriesDicomData.metaData.depth - 1);
-    this.coronalPosition.value = Math.min(this.viewState.coronalPosition, this.seriesDicomData.metaData.width - 1);
-    this.sagittalPosition.value = Math.min(this.viewState.sagittalPosition, this.seriesDicomData.metaData.height - 1);
     this.axialThicknessValue.textContent = this.viewState.axialThickness;
     this.coronalThicknessValue.textContent = this.viewState.coronalThickness;
     this.sagittalThicknessValue.textContent = this.viewState.sagittalThickness;
