@@ -7,19 +7,13 @@ class Loader {
       data: [],
     };
   }
-  async load(files) {
-    for (const file of files) {
-      await this.parseDicom(file);
-    }
-    this.seriesDicomData.data.sort((a, b) => b.z - a.z);
-    this.seriesDicomData.metaData.depth = files.length;
-  }
   async loadArrayBuffers(arrayBuffers) {
     for (const arrayBuffer of arrayBuffers) {
       await this.parseArrayBuffer(arrayBuffer);
     }
     this.seriesDicomData.data.sort((a, b) => b.z - a.z);
     this.seriesDicomData.metaData.depth = arrayBuffers.length;
+    this.seriesDicomData.metaData.sliceSpacing = Math.abs(this.seriesDicomData.data[1].z - this.seriesDicomData.data[0].z);
   }
   async parseArrayBuffer(arrayBuffer) {
     const dataSet = dicomParser.parseDicom(new Uint8Array(arrayBuffer));
@@ -30,7 +24,6 @@ class Loader {
         height: dataSet.uint16('x00280011'),
         pixelSpacing: dataSet.string('x00280030').split('\\').map(parseFloat),
         sliceThickness: dataSet.floatString('x00180050'),
-        sliceSpacing: dataSet.floatString('x00180088'),
         patientPosition: dataSet.string('x00180032'),
         windowCenter: dataSet.floatString('x00281050', 0),
         windowWidth: dataSet.floatString('x00281051', 0),
@@ -38,11 +31,7 @@ class Loader {
         rescaleIntercept: dataSet.floatString('x00281052', 0),
         bitsAllocated: dataSet.uint16('x00280100'),
         pixelRepresentation: dataSet.uint16('x00280103'),
-        _sliceSpacing: dataSet.string('x00200032').split('\\').map(parseFloat)[2],
       };
-    }
-    if (!this.seriesDicomData.metaData.sliceSpacing && this.seriesDicomData.metaData._sliceSpacing) {
-      this.seriesDicomData.metaData.sliceSpacing = Math.abs(dataSet.string('x00200032').split('\\').map(parseFloat)[2] - this.seriesDicomData.metaData._sliceSpacing);
     }
     const { bitsAllocated, pixelRepresentation } = this.seriesDicomData.metaData;
     const pixelDataElement = dataSet.elements.x7fe00010;
@@ -60,6 +49,15 @@ class Loader {
       pixelData,
       z: dataSet.string('x00200032').split('\\').map(parseFloat)[2],
     });
+  }
+  async load(files) {
+    for (const file of files) {
+      await this.parseDicom(file);
+    }
+    this.seriesDicomData.data.sort((a, b) => b.z - a.z);
+    this.seriesDicomData.metaData.depth = files.length;
+    this.seriesDicomData.metaData.sliceSpacing = Math.abs(this.seriesDicomData.data[1].z - this.seriesDicomData.data[0].z);
+    console.log(this.seriesDicomData.metaData.sliceSpacing);
   }
   async parseDicom(file) {
     const reader = new FileReader();
