@@ -241,32 +241,7 @@ class GpuRenderer {
     // --- 在此处填充 u_volume_size ---
     this.slicePlane.material.uniforms.u_volume_size.value.set(width, height, depth);
 
-    // // --- Physical Scaling Logic (Deactivated by default) ---
-    // const { pixelSpacing, sliceThickness } = metaData;
-    // const physicalWidth = width * pixelSpacing[0];
-    // const physicalHeight = height * pixelSpacing[1];
-    // const physicalDepth = depth * sliceThickness;
-
-    // let aspectRatioX = 1;
-    // let aspectRatioY = 1;
-
-    // if (this.orientation === 'axial') {
-    //   aspectRatioX = physicalWidth;
-    //   aspectRatioY = physicalHeight;
-    // } else if (this.orientation === 'coronal') {
-    //   aspectRatioX = physicalWidth;
-    //   aspectRatioY = physicalDepth;
-    // } else if (this.orientation === 'sagittal') {
-    //   aspectRatioX = physicalHeight;
-    //   aspectRatioY = physicalDepth;
-    // }
-
-    // const maxDim = Math.max(aspectRatioX, aspectRatioY);
-    // this.slicePlane.scale.x = aspectRatioX / maxDim;
-    // this.slicePlane.scale.y = aspectRatioY / maxDim;
-    this.slicePlane.scale.x = 1;
-    this.slicePlane.scale.y = 1;
-    // --- End of Physical Scaling Logic ---
+    this.setSlicePlaneScale(true);
 
     if (this.orientation === 'coronal') {
       this.slicePlane.material.defines.CORONAL_VIEW = true;
@@ -277,6 +252,44 @@ class GpuRenderer {
     }
     this.slicePlane.material.needsUpdate = true;
     return texture;
+  }
+  setSlicePlaneScale(state = false) {
+    if (state) {
+      // --- Physical Scaling Logic (Deactivated by default) ---
+      const { width, height, depth, pixelSpacing, sliceThickness, sliceSpacing } = this.volume.metaData;
+      // 行间距 rowPixelSpacing: pixelSpacing[0],
+      // 列间距 columnPixelSpacing: pixelSpacing[1],
+      const physicalWidth = width * pixelSpacing[1];
+      const physicalHeight = height * pixelSpacing[0];
+      const physicalDepth = sliceSpacing * (depth - 1) + sliceThickness;
+
+      let aspectRatioX = 1;
+      let aspectRatioY = 1;
+
+      if (this.orientation === 'axial') {
+        aspectRatioX = physicalWidth;
+        aspectRatioY = physicalHeight;
+        this.slicePlane.imageWidth = width;
+        this.slicePlane.imageHeight = height;
+      } else if (this.orientation === 'coronal') {
+        aspectRatioX = physicalWidth;
+        aspectRatioY = physicalDepth;
+        this.slicePlane.imageWidth = width;
+        this.slicePlane.imageHeight = Math.round(physicalDepth / pixelSpacing[1]);
+      } else if (this.orientation === 'sagittal') {
+        aspectRatioX = physicalHeight;
+        aspectRatioY = physicalDepth;
+        this.slicePlane.imageWidth = height;
+        this.slicePlane.imageHeight = Math.round(physicalDepth / pixelSpacing[0]);
+      }
+      console.log(this.slicePlane.imageWidth, this.slicePlane.imageHeight);
+      const maxDim = Math.max(aspectRatioX, aspectRatioY);
+      this.slicePlane.scale.x = aspectRatioX / maxDim;
+      this.slicePlane.scale.y = aspectRatioY / maxDim;
+    } else {
+      this.slicePlane.scale.x = 1;
+      this.slicePlane.scale.y = 1;
+    }
   }
   render(viewState) {
     this.viewState = viewState; // Keep track of the current state

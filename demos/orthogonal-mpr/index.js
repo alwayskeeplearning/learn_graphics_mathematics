@@ -1,6 +1,9 @@
+/* eslint-disable no-unused-vars */
 import Loader from './loader';
 import GpuRenderer from './renderer';
-import data from './data.json';
+import cerebralData from './cerebral.json';
+import chestData from './chest.json';
+import chestData1 from './chest1.json';
 
 const SCROLL_THRESHOLD = 3;
 
@@ -38,7 +41,8 @@ class App {
     this.axialThicknessValue = document.getElementById('axial-thickness-value');
     this.coronalThicknessValue = document.getElementById('coronal-thickness-value');
     this.sagittalThicknessValue = document.getElementById('sagittal-thickness-value');
-    this.loadRemoteImageBtn = document.getElementById('load-remote-image');
+    this.loadRemoteChestImageBtn = document.getElementById('load-remote-chest-image');
+    this.loadRemoteCerebralImageBtn = document.getElementById('load-remote-cerebral-image');
     this.maxIPBtn = document.getElementById('max-ip');
     this.minIPBtn = document.getElementById('min-ip');
     this.avgIPBtn = document.getElementById('avg-ip');
@@ -107,8 +111,35 @@ class App {
       this.renderAllViews();
       this.updateViewState();
     });
-    this.loadRemoteImageBtn.addEventListener('click', async () => {
-      const fetchs = data.images.map(image => {
+    this.loadRemoteChestImageBtn.addEventListener('click', async () => {
+      const fetchs = chestData.images.map(image => {
+        const url = `http://172.16.8.2:8000/${image.storagePath}`;
+        return fetch(url).then(res => res.arrayBuffer());
+      });
+      const arrayBuffers = await Promise.all(fetchs);
+      if (!this.axialRenderer) {
+        this.axialRenderer = new GpuRenderer(this.viewerAxial, 'axial', this.handleDrag);
+        this.coronalRenderer = new GpuRenderer(this.viewerCoronal, 'coronal', this.handleDrag);
+        this.sagittalRenderer = new GpuRenderer(this.viewerSagittal, 'sagittal', this.handleDrag);
+      }
+
+      await this.loader.loadArrayBuffers(arrayBuffers);
+      this.seriesDicomData = this.loader.seriesDicomData;
+
+      this.viewState.windowCenter = this.seriesDicomData.metaData.windowCenter;
+      this.viewState.windowWidth = this.seriesDicomData.metaData.windowWidth;
+      this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
+      this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
+      this.viewState.axialPosition = Math.floor(this.seriesDicomData.metaData.depth / 2);
+
+      this.updateViewState();
+      const sharedTexture = this.axialRenderer.setVolume(this.seriesDicomData);
+      this.coronalRenderer.setVolume(this.seriesDicomData, sharedTexture);
+      this.sagittalRenderer.setVolume(this.seriesDicomData, sharedTexture);
+      this.renderAllViews();
+    });
+    this.loadRemoteCerebralImageBtn.addEventListener('click', async () => {
+      const fetchs = cerebralData.images.map(image => {
         const url = `http://172.16.8.2:8000/${image.storagePath}`;
         return fetch(url).then(res => res.arrayBuffer());
       });
