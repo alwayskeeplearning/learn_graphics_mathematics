@@ -1,4 +1,5 @@
 /* eslint-disable no-unused-vars */
+import * as THREE from 'three';
 import Loader from './loader';
 import GpuRenderer from './renderer';
 import cerebralData from './cerebral.json';
@@ -22,6 +23,12 @@ class App {
       axialThickness: 0,
       coronalThickness: 0,
       sagittalThickness: 0,
+      // 共享的3D罗盘（方向坐标系）
+      orientation: {
+        xAxis: new THREE.Vector3(1, 0, 0),
+        yAxis: new THREE.Vector3(0, 1, 0),
+        zAxis: new THREE.Vector3(0, 0, 1),
+      },
       slabMode: 0,
     };
     this.loader = new Loader();
@@ -224,11 +231,16 @@ class App {
   handleDrag(stateUpdate) {
     if (stateUpdate.type !== 'drag' || !this.seriesDicomData) return;
 
-    stateUpdate.changes.forEach(({ target, type, delta }) => {
+    stateUpdate.changes.forEach(({ target, type, delta, angle, newOrientation }) => {
       if (!target || !type) return;
       if (type === 'handle') {
         const thicknessKey = `${target}Thickness`;
         this.viewState[thicknessKey] = Number(this.viewState[thicknessKey]) + Math.round(delta);
+        return;
+      }
+      // 新增：处理方向坐标系的更新
+      if (type === 'orientation') {
+        this.viewState.orientation = newOrientation;
         return;
       }
       const posKey = `${target}Position`;
