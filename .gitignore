@@ -4,6 +4,7 @@ dist
 docs_dist
 compiled
 bin
+dicoms
 
 .dumi/tmp
 .dumi/tmp-production

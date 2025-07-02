@@ -20,7 +20,7 @@ const SLICE_FRAGMENT_SHADER = `
   uniform float u_slabThickness;
   uniform vec3 u_volume_size;
   uniform int u_slabMode; // 0: MaxIP, 1: MinIP, 2: AvgIP
-
+  
   varying vec2 v_texCoord;
 
   out vec4 out_FragColor;
