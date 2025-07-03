@@ -1,5 +1,4 @@
 /* eslint-disable no-unused-vars */
-import * as THREE from 'three';
 import Loader from './loader';
 import GpuRenderer from './renderer';
 import cerebralData from './cerebral.json';
@@ -24,9 +23,6 @@ class App {
       coronalThickness: 0,
       sagittalThickness: 0,
       slabMode: 0,
-      axialRotation: new THREE.Quaternion(),
-      coronalRotation: new THREE.Quaternion(),
-      sagittalRotation: new THREE.Quaternion(),
     };
     this.loader = new Loader();
     this.axialRenderer = null;
@@ -72,8 +68,8 @@ class App {
 
       this.viewState.windowCenter = this.seriesDicomData.metaData.windowCenter;
       this.viewState.windowWidth = this.seriesDicomData.metaData.windowWidth;
-      this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
-      this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
+      this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
+      this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
       this.viewState.axialPosition = Math.floor(this.seriesDicomData.metaData.depth / 2);
 
       this.updateViewState();
@@ -132,8 +128,8 @@ class App {
 
       this.viewState.windowCenter = this.seriesDicomData.metaData.windowCenter;
       this.viewState.windowWidth = this.seriesDicomData.metaData.windowWidth;
-      this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
-      this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
+      this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
+      this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
       this.viewState.axialPosition = Math.floor(this.seriesDicomData.metaData.depth / 2);
 
       this.updateViewState();
@@ -144,7 +140,7 @@ class App {
     });
     this.loadRemoteCerebralImageBtn.addEventListener('click', async () => {
       const fetchs = cerebralData.images.map(image => {
-        const url = `http://127.0.0.1:8000/${image.storagePath}`;
+        const url = `http://172.16.8.2:8000/${image.storagePath}`;
         return fetch(url).then(res => res.arrayBuffer());
       });
       const arrayBuffers = await Promise.all(fetchs);
@@ -159,8 +155,8 @@ class App {
 
       this.viewState.windowCenter = this.seriesDicomData.metaData.windowCenter;
       this.viewState.windowWidth = this.seriesDicomData.metaData.windowWidth;
-      this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
-      this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
+      this.viewState.coronalPosition = Math.floor(this.seriesDicomData.metaData.width / 2);
+      this.viewState.sagittalPosition = Math.floor(this.seriesDicomData.metaData.height / 2);
       this.viewState.axialPosition = Math.floor(this.seriesDicomData.metaData.depth / 2);
 
       this.updateViewState();
@@ -218,64 +214,28 @@ class App {
   }
   handleResize() {
     if (this.axialRenderer && this.coronalRenderer && this.sagittalRenderer) {
+      console.log('handleResize');
       this.axialRenderer.resize();
       this.coronalRenderer.resize();
       this.sagittalRenderer.resize();
+      this.renderAllViews();
     }
   }
   handleDrag(stateUpdate) {
-    if (!this.seriesDicomData) return;
+    if (stateUpdate.type !== 'drag' || !this.seriesDicomData) return;
 
-    if (stateUpdate.type === 'rotate') {
-      const { orientation, target, deltaAngle } = stateUpdate;
-
-      const deltaQuaternion = new THREE.Quaternion();
-      console.log(orientation, target, deltaAngle);
-
-      if (orientation === 'axial') {
-        const rotationCoronal = new THREE.Vector3(0, 0, 1);
-        deltaQuaternion.setFromAxisAngle(rotationCoronal, deltaAngle);
-        this.viewState.coronalRotation.premultiply(deltaQuaternion);
-        const rotationSagittal = new THREE.Vector3(0, 0, 1);
-        deltaQuaternion.setFromAxisAngle(rotationSagittal, -deltaAngle);
-        this.viewState.sagittalRotation.premultiply(deltaQuaternion);
-      } else if (orientation === 'coronal') {
-        const rotationAxis = new THREE.Vector3(0, 1, 0);
-        deltaQuaternion.setFromAxisAngle(rotationAxis, deltaAngle);
-        this.viewState.axialRotation.premultiply(deltaQuaternion);
-
-        const rotationSagittal = new THREE.Vector3(0, 1, 0);
-        deltaQuaternion.setFromAxisAngle(rotationSagittal, -deltaAngle);
-        this.viewState.sagittalRotation.premultiply(deltaQuaternion);
-      } else if (orientation === 'sagittal') {
-        const rotationAxis = new THREE.Vector3(1, 0, 0);
-        deltaQuaternion.setFromAxisAngle(rotationAxis, deltaAngle);
-        this.viewState.axialRotation.premultiply(deltaQuaternion);
-
-        const rotationCoronal = new THREE.Vector3(1, 0, 0);
-        deltaQuaternion.setFromAxisAngle(rotationCoronal, -deltaAngle);
-        this.viewState.coronalRotation.premultiply(deltaQuaternion);
+    stateUpdate.changes.forEach(({ target, type, delta }) => {
+      if (!target || !type) return;
+      if (type === 'handle') {
+        const thicknessKey = `${target}Thickness`;
+        this.viewState[thicknessKey] = Number(this.viewState[thicknessKey]) + Math.round(delta);
+        return;
       }
-
-      this.renderAllViews();
-      return;
-    }
-
-    if (stateUpdate.type === 'drag') {
-      stateUpdate.changes.forEach(change => {
-        if (!change) return;
-
-        if (change.type === 'handle') {
-          const thicknessKey = `${change.target}Thickness`;
-          const currentThickness = this.viewState[thicknessKey] || 0;
-          this.viewState[thicknessKey] = currentThickness + change.delta;
-        } else if (change.type === 'line') {
-          const posKey = `${change.target}Position`;
-          const currentPosition = this.viewState[posKey] || 0;
-          this.viewState[posKey] = currentPosition + change.delta;
-        }
-      });
-    }
+      const posKey = `${target}Position`;
+      let newPosition = Number(this.viewState[posKey]) + delta;
+      // newPosition = Math.max(0, Math.min(maxPositions[target], newPosition));
+      this.viewState[posKey] = Math.round(newPosition);
+    });
 
     this.updateViewState();
     this.renderAllViews();
@@ -288,16 +248,14 @@ class App {
   }
 
   updateViewState() {
-    this.windowWidthValue.textContent = Math.round(this.viewState.windowWidth);
-    this.windowCenterValue.textContent = Math.round(this.viewState.windowCenter);
-    this.axialPositionValue.textContent = Math.round(this.viewState.axialPosition);
-    this.coronalPositionValue.textContent = Math.round(this.viewState.coronalPosition);
-    this.sagittalPositionValue.textContent = Math.round(this.viewState.sagittalPosition);
-    this.axialThicknessValue.textContent = Math.round(this.viewState.axialThickness);
-    this.coronalThicknessValue.textContent = Math.round(this.viewState.coronalThickness);
-    this.sagittalThicknessValue.textContent = Math.round(this.viewState.sagittalThickness);
+    this.axialPositionValue.textContent = Math.min(this.viewState.axialPosition, this.seriesDicomData.metaData.depth - 1);
+    this.coronalPositionValue.textContent = Math.min(this.viewState.coronalPosition, this.seriesDicomData.metaData.width - 1);
+    this.sagittalPositionValue.textContent = Math.min(this.viewState.sagittalPosition, this.seriesDicomData.metaData.height - 1);
+    this.windowCenterValue.textContent = this.viewState.windowCenter;
+    this.windowWidthValue.textContent = this.viewState.windowWidth;
+    this.axialThicknessValue.textContent = this.viewState.axialThickness;
+    this.coronalThicknessValue.textContent = this.viewState.coronalThickness;
+    this.sagittalThicknessValue.textContent = this.viewState.sagittalThickness;
   }
 }
-
-const app = new App();
-window.app = app;
+new App();
