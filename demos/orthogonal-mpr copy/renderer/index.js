@@ -62,7 +62,6 @@ class GpuRenderer {
   // 手柄组
   handles = {
     slab: {},
-    rotate: {}, // --- 新增：用于存储旋转抓手 ---
   };
   // 十字线组
   crosshairsGroup = null;
@@ -76,8 +75,6 @@ class GpuRenderer {
   dragStartPosition = new THREE.Vector3();
   // 拖拽起始时视图状态
   dragStartViewState = null;
-  // --- 新增：用于旋转计算的起始角度 ---
-  dragStartAngle = 0;
   // 是否正在进行resize
   isResizing = false;
   // resize结束的debounce定时器
@@ -89,38 +86,14 @@ class GpuRenderer {
   // 十字线垂直线位置
   yPos = 0;
 
-  // --- 新增：用于缓存平面向量的属性 ---
-  planeOrigin = new THREE.Vector3(0.5, 0.5, 0.5);
-  planeXAxis = new THREE.Vector3(1, 0, 0);
-  planeYAxis = new THREE.Vector3(0, 1, 0);
-  planeNormal = new THREE.Vector3(0, 0, 1);
-
   constructor(container, orientation = 'axial', onStateChange = () => {}) {
     this.container = container;
     this.orientation = orientation;
     this.onStateChange = onStateChange;
-    this.viewState = {
-      windowCenter: 0,
-      windowWidth: 0,
-      position: 0,
-      thickness: 0,
-      axialRotation: new THREE.Quaternion(),
-      coronalRotation: new THREE.Quaternion(),
-      sagittalRotation: new THREE.Quaternion(),
-    };
-    this.planeOrigin = new THREE.Vector3();
-    this.planeXAxis = new THREE.Vector3();
-    this.planeYAxis = new THREE.Vector3();
-    this.planeNormal = new THREE.Vector3();
-
-    this.dragTarget = null;
-    this.dragStartMouse = new THREE.Vector2();
-    this.dragStartViewState = {}; // To store state at the beginning of a drag
 
     this.initThree();
     this.setupCrosshairs();
     this.setupThicknessControls();
-    this.setupRotationControls();
     this.setupDragHandlers();
   }
   initThree() {
@@ -134,13 +107,14 @@ class GpuRenderer {
     this.scene = new THREE.Scene();
 
     // 创建渲染器
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, preserveDrawingBuffer: true, antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, preserveDrawingBuffer: true });
     this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setClearColor(0x000000, 1);
 
     // 创建相机
-    this.camera = new THREE.OrthographicCamera(-0.5, 0.5, 0.5, -0.5, 0.1, 10);
+    const aspect = width / height;
+    this.camera = new THREE.OrthographicCamera(-aspect / 2, aspect / 2, 0.5, -0.5, 0.1, 1);
     this.camera.position.z = 1;
 
     // 创建切片平面
@@ -150,19 +124,15 @@ class GpuRenderer {
       fragmentShader: SLICE_FRAGMENT_SHADER,
       uniforms: {
         u_texture: { value: null },
-        u_textureSize: { value: new THREE.Vector3() },
-        u_plane_origin: { value: new THREE.Vector3() },
-        u_plane_xAxis: { value: new THREE.Vector3() },
-        u_plane_yAxis: { value: new THREE.Vector3() },
-        u_plane_normal: { value: new THREE.Vector3() },
+        u_sliceIndex: { value: 0 },
+        u_sliceCount: { value: 0 },
+        u_windowWidth: { value: 0 },
         u_windowCenter: { value: 0 },
-        u_windowWidth: { value: 1 },
-        u_rescaleSlope: { value: 1 },
-        u_rescaleIntercept: { value: 0 },
-        u_minPixelValue: { value: 0 },
-        u_maxPixelValue: { value: 1 },
+        u_rescaleSlope: { value: 1.0 },
+        u_rescaleIntercept: { value: 0.0 },
+        u_slabThickness: { value: 0.0 },
+        u_volume_size: { value: new THREE.Vector3(0, 0, 0) },
         u_slabMode: { value: 0 },
-        u_slabThickness: { value: 0 },
       },
       glslVersion: THREE.GLSL3,
     });
@@ -190,11 +160,13 @@ class GpuRenderer {
     this.renderer.setSize(width, height);
     const viewportAspect = width / height;
 
-    // 修正：内容尺寸不再是写死的1x1，而是由slicePlane的缩放决定
+    // 正确的、通用的相机自适应逻辑
+    // 1. 获取内容的实际世界尺寸
     const contentWidth = this.slicePlane.scale.x;
     const contentHeight = this.slicePlane.scale.y;
     const contentAspect = contentWidth / contentHeight;
 
+    // 2. 比较窗口和内容的宽高比，确定是左右留黑还是上下留黑
     if (viewportAspect > contentAspect) {
       // 情况1：窗口比内容更"宽"，以内容高度为基准，左右留黑 (Pillarbox)
       const cameraHeight = contentHeight;
@@ -215,6 +187,7 @@ class GpuRenderer {
 
     this.camera.updateProjectionMatrix();
 
+    // --- 修正：确保所有线条材质的分辨率都能被正确更新 ---
     const allLineMaterials = [this.crosshairsHorizontalLineMaterial, this.crosshairsVerticalLineMaterial, this.hitboxCrosshairsHorizontalLineMaterial, this.hitboxCrosshairsVerticalLineMaterial, this.slabHorizontalLineMaterial, this.slabVerticalLineMaterial, this.hitboxSlabHorizontalLineMaterial, this.hitboxSlabVerticalLineMaterial];
 
     allLineMaterials.forEach(material => {
@@ -222,7 +195,7 @@ class GpuRenderer {
         material.resolution.set(width, height);
       }
     });
-    this.invalidate();
+    this.invalidate(); // 请求一次渲染来启动循环
   }
   setVolume(seriesDicomData, texture3D) {
     this.volume = seriesDicomData;
@@ -237,6 +210,7 @@ class GpuRenderer {
     });
     const floatVolumeData = new Float32Array(integerVolumeData);
     let texture = null;
+    // 如果传入纹理，则直接使用传入的纹理 目的是为了共享纹理（毕竟一套图的纹理还是不小的）防止浪费显存
     if (texture3D) {
       texture = texture3D;
     } else {
@@ -245,202 +219,224 @@ class GpuRenderer {
       texture.format = THREE.RedFormat;
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
+      // 设置纹理的解包对齐方式，确保纹理数据正确
       texture.unpackAlignment = 1;
       texture.needsUpdate = true;
     }
 
     this.slicePlane.material.uniforms.u_texture.value = texture;
-    this.slicePlane.material.uniforms.u_textureSize.value = new THREE.Vector3(width, height, depth);
-    this.slicePlane.material.uniforms.u_minPixelValue.value = metaData.minPixelValue;
-    this.slicePlane.material.uniforms.u_maxPixelValue.value = metaData.maxPixelValue;
     this.slicePlane.material.uniforms.u_windowWidth.value = windowWidth;
     this.slicePlane.material.uniforms.u_windowCenter.value = windowCenter;
     this.slicePlane.material.uniforms.u_rescaleSlope.value = rescaleSlope;
     this.slicePlane.material.uniforms.u_rescaleIntercept.value = rescaleIntercept;
+    if (this.orientation === 'coronal') {
+      this.slicePlane.material.uniforms.u_sliceCount.value = height;
+    } else if (this.orientation === 'sagittal') {
+      this.slicePlane.material.uniforms.u_sliceCount.value = width;
+    } else {
+      // axial
+      this.slicePlane.material.uniforms.u_sliceCount.value = depth;
+    }
 
-    // 由于我们不再修改defines，此行已不再需要，故移除。
-    // this.slicePlane.material.needsUpdate = true;
+    // --- 在此处填充 u_volume_size ---
+    this.slicePlane.material.uniforms.u_volume_size.value.set(width, height, depth);
+
+    this.setSlicePlaneScale(true);
+
+    if (this.orientation === 'coronal') {
+      this.slicePlane.material.defines.CORONAL_VIEW = true;
+    } else if (this.orientation === 'sagittal') {
+      this.slicePlane.material.defines.SAGITTAL_VIEW = true;
+    } else {
+      this.slicePlane.material.defines.AXIAL_VIEW = true;
+    }
+    this.slicePlane.material.needsUpdate = true;
     return texture;
   }
+  setSlicePlaneScale(state = false) {
+    if (state) {
+      // --- Physical Scaling Logic (Deactivated by default) ---
+      const { width, height, depth, pixelSpacing, sliceThickness, sliceSpacing } = this.volume.metaData;
+      // 行间距 rowPixelSpacing: pixelSpacing[0],
+      // 列间距 columnPixelSpacing: pixelSpacing[1],
+      const physicalWidth = width * pixelSpacing[1];
+      const physicalHeight = height * pixelSpacing[0];
+      const physicalDepth = sliceSpacing * (depth - 1) + sliceThickness;
+
+      let aspectRatioX = 1;
+      let aspectRatioY = 1;
+
+      if (this.orientation === 'axial') {
+        aspectRatioX = physicalWidth;
+        aspectRatioY = physicalHeight;
+        this.slicePlane.imageWidth = width;
+        this.slicePlane.imageHeight = height;
+      } else if (this.orientation === 'coronal') {
+        aspectRatioX = physicalWidth;
+        aspectRatioY = physicalDepth;
+        this.slicePlane.imageWidth = width;
+        this.slicePlane.imageHeight = Math.round(physicalDepth / pixelSpacing[1]);
+      } else if (this.orientation === 'sagittal') {
+        aspectRatioX = physicalHeight;
+        aspectRatioY = physicalDepth;
+        this.slicePlane.imageWidth = height;
+        this.slicePlane.imageHeight = Math.round(physicalDepth / pixelSpacing[0]);
+      }
+      console.log(this.slicePlane.imageWidth, this.slicePlane.imageHeight);
+      const maxDim = Math.max(aspectRatioX, aspectRatioY);
+      this.slicePlane.scale.x = aspectRatioX / maxDim;
+      this.slicePlane.scale.y = aspectRatioY / maxDim;
+    } else {
+      this.slicePlane.scale.x = 1;
+      this.slicePlane.scale.y = 1;
+    }
+  }
   render(viewState) {
-    this.viewState = viewState;
+    this.viewState = viewState; // Keep track of the current state
     if (!this.volume) {
       this.invalidate();
       return;
     }
 
-    const uniforms = this.slicePlane.material.uniforms;
     const { windowCenter, windowWidth, slabMode } = viewState;
+    const { width, height, depth } = this.volume.metaData;
     const { axialPosition, coronalPosition, sagittalPosition, axialThickness, coronalThickness, sagittalThickness } = viewState;
-    // --- 恢复：各自读取自己的旋转状态 ---
-    const { axialRotation, coronalRotation, sagittalRotation } = viewState;
-    const { metaData } = this.volume;
-    const { width, height, depth, pixelSpacing, sliceThickness, sliceSpacing } = metaData;
+    const uniforms = this.slicePlane.material.uniforms;
 
     uniforms.u_windowCenter.value = windowCenter;
     uniforms.u_windowWidth.value = windowWidth;
     uniforms.u_slabMode.value = slabMode || 0;
+    const { left, right, top, bottom } = this.camera;
+    // 十字线中心点间距
+    const gap = 0.05;
+    const zOffset = 0.01;
 
-    // --- 核心改造: 计算平面向量 ---
-    const physicalWidth = width * (pixelSpacing ? pixelSpacing[1] : 1);
-    const physicalHeight = height * (pixelSpacing ? pixelSpacing[0] : 1);
-    const physicalDepth = sliceSpacing * (depth - 1) + sliceThickness;
-    const maxDim = Math.max(physicalWidth, physicalHeight, physicalDepth);
-
-    const texSpaceWidth = physicalWidth / maxDim;
-    const texSpaceHeight = physicalHeight / maxDim;
-    const texSpaceDepth = physicalDepth / maxDim;
-
+    // 十字线位置
+    let xPos = 0;
+    let yPos = 0;
+    // 水平线/垂直线默认厚度值
     let verticalSlabThickness = 0.0;
     let horizontalSlabThickness = 0.0;
 
-    // --- 恢复：根据视图类型选择对应的旋转状态 ---
-    let rotation;
     switch (this.orientation) {
       case 'axial':
-        rotation = axialRotation;
-        this.planeOrigin.set(0.5, 0.5, (axialPosition + 0.5) / depth);
-        this.planeXAxis.set(texSpaceWidth, 0, 0);
-        this.planeYAxis.set(0, texSpaceHeight, 0);
-        this.planeNormal.set(0, 0, 1);
+        uniforms.u_sliceIndex.value = axialPosition;
+        uniforms.u_sliceCount.value = depth;
         uniforms.u_slabThickness.value = axialThickness || 0.0;
-        this.xPos = (sagittalPosition / (width - 1) - 0.5) * texSpaceWidth;
-        this.yPos = (0.5 - coronalPosition / (height - 1)) * texSpaceHeight;
-        verticalSlabThickness = viewState.sagittalThickness || 0.0;
-        horizontalSlabThickness = viewState.coronalThickness || 0.0;
+        xPos = sagittalPosition / (width - 1) - 0.5;
+        yPos = 0.5 - coronalPosition / (height - 1);
+        verticalSlabThickness = viewState.sagittalThickness || 0.0; // 垂直线(矢状位)代表Y轴，
+        horizontalSlabThickness = viewState.coronalThickness || 0.0; // 水平线(冠状位)代表X轴，
         break;
       case 'coronal':
-        rotation = coronalRotation;
-        this.planeOrigin.set(0.5, (coronalPosition + 0.5) / height, 0.5);
-        this.planeXAxis.set(texSpaceWidth, 0, 0);
-        this.planeYAxis.set(0, 0, texSpaceDepth);
-        this.planeNormal.set(0, 1, 0);
+        uniforms.u_sliceIndex.value = coronalPosition;
+        uniforms.u_sliceCount.value = height;
         uniforms.u_slabThickness.value = coronalThickness || 0.0;
-        this.xPos = (sagittalPosition / (width - 1) - 0.5) * texSpaceWidth;
-        this.yPos = (0.5 - axialPosition / (depth - 1)) * texSpaceDepth;
-        verticalSlabThickness = viewState.sagittalThickness || 0.0;
-        horizontalSlabThickness = viewState.axialThickness || 0.0;
+        xPos = sagittalPosition / (width - 1) - 0.5;
+        yPos = 0.5 - axialPosition / (depth - 1);
+        verticalSlabThickness = viewState.sagittalThickness || 0.0; // 垂直线(矢状位)代表Z轴，
+        horizontalSlabThickness = viewState.axialThickness || 0.0; // 水平线(轴状位)代表X轴，
         break;
       case 'sagittal':
-        rotation = sagittalRotation;
-        this.planeOrigin.set((sagittalPosition + 0.5) / width, 0.5, 0.5);
-        this.planeXAxis.set(0, texSpaceHeight, 0);
-        this.planeYAxis.set(0, 0, texSpaceDepth);
-        this.planeNormal.set(1, 0, 0);
+        uniforms.u_sliceIndex.value = sagittalPosition;
+        uniforms.u_sliceCount.value = width;
         uniforms.u_slabThickness.value = sagittalThickness || 0.0;
-        this.xPos = (coronalPosition / (height - 1) - 0.5) * texSpaceHeight;
-        this.yPos = (0.5 - axialPosition / (depth - 1)) * texSpaceDepth;
-        verticalSlabThickness = viewState.coronalThickness || 0.0;
-        horizontalSlabThickness = viewState.axialThickness || 0.0;
+        xPos = coronalPosition / (height - 1) - 0.5;
+        yPos = 0.5 - axialPosition / (depth - 1);
+        verticalSlabThickness = viewState.coronalThickness || 0.0; // 垂直线(冠状位)代表Z轴
+        horizontalSlabThickness = viewState.axialThickness || 0.0; // 水平线(轴状位)代表Y轴
         break;
     }
+    xPos = xPos * this.slicePlane.scale.x;
+    yPos = yPos * this.slicePlane.scale.y;
+    this.xPos = xPos;
+    this.yPos = yPos;
+    // 计算十字线位置
+    const leftHPoints = [left, yPos, zOffset, xPos - gap, yPos, zOffset];
+    const rightHPoints = [xPos + gap, yPos, zOffset, right, yPos, zOffset];
+    const bottomVPoints = [xPos, bottom, zOffset, xPos, yPos - gap, zOffset];
+    const topVPoints = [xPos, yPos + gap, zOffset, xPos, top, zOffset];
 
-    // --- 应用当前视图对应的旋转 ---
-    this.planeXAxis.applyQuaternion(rotation);
-    this.planeYAxis.applyQuaternion(rotation);
-    this.planeNormal.applyQuaternion(rotation);
-
-    // 根据习惯，Y轴在屏幕上是向下的，但我们的v_texCoord.y是向上的。
-    this.planeYAxis.negate();
-
-    uniforms.u_plane_origin.value.copy(this.planeOrigin);
-    uniforms.u_plane_xAxis.value.copy(this.planeXAxis);
-    uniforms.u_plane_yAxis.value.copy(this.planeYAxis);
-    uniforms.u_plane_normal.value.copy(this.planeNormal);
-
-    // --- 修正：根据向量长度，正确缩放平面以保证宽高比 ---
-    if (Math.abs(this.planeYAxis.length()) > 1e-6) {
-      const oldAspect = this.slicePlane.scale.x / this.slicePlane.scale.y;
-      const newAspect = this.planeXAxis.length() / this.planeYAxis.length();
-
-      // 当宽高比发生显著变化时，更新平面缩放并强制重新校准相机
-      if (Math.abs(newAspect - oldAspect) > 1e-6) {
-        this.slicePlane.scale.set(this.planeXAxis.length(), this.planeYAxis.length(), 1);
-        this.resize(); // 强制相机根据新的宽高比进行更新
-      }
-    }
-
-    // --- 更新十字线和辅助线 ---
-    const { left, right, top, bottom } = this.camera;
-    const gap = 0.05 * Math.min(this.slicePlane.scale.x, this.slicePlane.scale.y); // 让gap也自适应
-    const zOffset = 0.01;
-
-    const leftHPoints = [left, this.yPos, zOffset, this.xPos - gap, this.yPos, zOffset];
-    const rightHPoints = [this.xPos + gap, this.yPos, zOffset, right, this.yPos, zOffset];
-    const bottomVPoints = [this.xPos, bottom, zOffset, this.xPos, this.yPos - gap, zOffset];
-    const topVPoints = [this.xPos, this.yPos + gap, zOffset, this.xPos, top, zOffset];
-
+    // 更新十字线位置
     this.lines.display.crosshairs.leftHorizontalLine.geometry.setPositions(leftHPoints);
     this.lines.display.crosshairs.rightHorizontalLine.geometry.setPositions(rightHPoints);
     this.lines.display.crosshairs.bottomVerticalLine.geometry.setPositions(bottomVPoints);
     this.lines.display.crosshairs.topVerticalLine.geometry.setPositions(topVPoints);
+
+    // 更新命中框十字线位置
     this.lines.hitbox.crosshairs.leftHorizontalLine.geometry.setPositions(leftHPoints);
     this.lines.hitbox.crosshairs.rightHorizontalLine.geometry.setPositions(rightHPoints);
     this.lines.hitbox.crosshairs.bottomVerticalLine.geometry.setPositions(bottomVPoints);
     this.lines.hitbox.crosshairs.topVerticalLine.geometry.setPositions(topVPoints);
-    this.lines.hitbox.center.position.set(this.xPos, this.yPos, zOffset);
 
-    // --- 修正：更新旋转抓手的位置 ---
-    const handleOffset = 0.02; // 抓手距离线端点的距离
-    this.handles.rotate.hStart.position.set(left + handleOffset, this.yPos, zOffset + 0.01);
-    this.handles.rotate.hEnd.position.set(right - handleOffset, this.yPos, zOffset + 0.01);
-    this.handles.rotate.vStart.position.set(this.xPos, top - handleOffset, zOffset + 0.01);
-    this.handles.rotate.vEnd.position.set(this.xPos, bottom + handleOffset, zOffset + 0.01);
+    // 更新命中框中心点位置
+    this.lines.hitbox.center.position.set(xPos, yPos, zOffset);
+    // 更新MIP厚度水平/垂直辅助线可见性
+    const hasVerticalSlab = verticalSlabThickness > 0.0;
+    const hasHorizontalSlab = horizontalSlabThickness > 0.0;
 
-    const hasSlab = verticalSlabThickness > 0.0 || horizontalSlabThickness > 0.0;
+    // --- 更新可见性 ---
+    this.lines.display.slab.topHorizontalLine.visible = hasHorizontalSlab;
+    this.lines.display.slab.bottomHorizontalLine.visible = hasHorizontalSlab;
+    this.lines.display.slab.leftVerticalLine.visible = hasVerticalSlab;
+    this.lines.display.slab.rightVerticalLine.visible = hasVerticalSlab;
+    this.lines.hitbox.slab.topHorizontalLine.visible = hasHorizontalSlab;
+    this.lines.hitbox.slab.bottomHorizontalLine.visible = hasHorizontalSlab;
+    this.lines.hitbox.slab.leftVerticalLine.visible = hasVerticalSlab;
+    this.lines.hitbox.slab.rightVerticalLine.visible = hasVerticalSlab;
 
-    this.lines.display.slab.topHorizontalLine.visible = hasSlab;
-    this.lines.display.slab.bottomHorizontalLine.visible = hasSlab;
-    this.lines.display.slab.leftVerticalLine.visible = hasSlab;
-    this.lines.display.slab.rightVerticalLine.visible = hasSlab;
-    this.lines.hitbox.slab.topHorizontalLine.visible = hasSlab;
-    this.lines.hitbox.slab.bottomHorizontalLine.visible = hasSlab;
-    this.lines.hitbox.slab.leftVerticalLine.visible = hasSlab;
-    this.lines.hitbox.slab.rightVerticalLine.visible = hasSlab;
-
+    // --- 更新位置 ---
+    // if (hasHorizontalSlab || hasVerticalSlab) {
     let verticalOffset = 0;
     let horizontalOffset = 0;
 
+    // (偏移量计算逻辑不变)
     if (this.orientation === 'axial') {
-      verticalOffset = (verticalSlabThickness / 2 / width) * texSpaceWidth;
-      horizontalOffset = (horizontalSlabThickness / 2 / height) * texSpaceHeight;
+      verticalOffset = verticalSlabThickness / 2 / width;
+      horizontalOffset = horizontalSlabThickness / 2 / height;
     } else if (this.orientation === 'coronal') {
-      verticalOffset = (verticalSlabThickness / 2 / width) * texSpaceWidth;
-      horizontalOffset = (horizontalSlabThickness / 2 / depth) * texSpaceDepth;
+      verticalOffset = verticalSlabThickness / 2 / width;
+      horizontalOffset = horizontalSlabThickness / 2 / depth;
     } else {
-      verticalOffset = (verticalSlabThickness / 2 / height) * texSpaceHeight;
-      horizontalOffset = (horizontalSlabThickness / 2 / depth) * texSpaceDepth;
+      // sagittal
+      verticalOffset = verticalSlabThickness / 2 / height;
+      horizontalOffset = horizontalSlabThickness / 2 / depth;
     }
 
-    const hTop = this.yPos + horizontalOffset;
-    const hBottom = this.yPos - horizontalOffset;
+    // 水平方向的贯穿线 (由 horizontalOffset 控制)
+    const hTop = yPos + horizontalOffset * this.slicePlane.scale.y;
+    const hBottom = yPos - horizontalOffset * this.slicePlane.scale.y;
+    // 更新MIP厚度水平辅助线和命中框水平辅助线位置
     this.lines.display.slab.topHorizontalLine.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
     this.lines.display.slab.bottomHorizontalLine.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
     this.lines.hitbox.slab.topHorizontalLine.geometry.setPositions([left, hTop, zOffset, right, hTop, zOffset]);
     this.lines.hitbox.slab.bottomHorizontalLine.geometry.setPositions([left, hBottom, zOffset, right, hBottom, zOffset]);
 
-    const vLeft = this.xPos - verticalOffset;
-    const vRight = this.xPos + verticalOffset;
+    // 垂直方向的贯穿线 (由 verticalOffset 控制)
+    const vLeft = xPos - verticalOffset * this.slicePlane.scale.x;
+    const vRight = xPos + verticalOffset * this.slicePlane.scale.x;
+    // 更新MIP厚度垂直辅助线和命中框垂直辅助线位置
     this.lines.display.slab.leftVerticalLine.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
     this.lines.display.slab.rightVerticalLine.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
     this.lines.hitbox.slab.leftVerticalLine.geometry.setPositions([vLeft, bottom, zOffset, vLeft, top, zOffset]);
     this.lines.hitbox.slab.rightVerticalLine.geometry.setPositions([vRight, top, zOffset, vRight, bottom, zOffset]);
 
+    // 计算线段距离
     this.lines.display.slab.topHorizontalLine.computeLineDistances();
     this.lines.display.slab.bottomHorizontalLine.computeLineDistances();
     this.lines.display.slab.leftVerticalLine.computeLineDistances();
     this.lines.display.slab.rightVerticalLine.computeLineDistances();
 
-    const handlePosOffset = 0.2;
-    this.handles.slab.topHorizontalLeft.position.set(this.xPos - handlePosOffset, hTop, zOffset + 0.01);
-    this.handles.slab.topHorizontalRight.position.set(this.xPos + handlePosOffset, hTop, zOffset + 0.01);
-    this.handles.slab.bottomHorizontalLeft.position.set(this.xPos - handlePosOffset, hBottom, zOffset + 0.01);
-    this.handles.slab.bottomHorizontalRight.position.set(this.xPos + handlePosOffset, hBottom, zOffset + 0.01);
-    this.handles.slab.leftVerticalTop.position.set(vLeft, this.yPos + handlePosOffset, zOffset + 0.01);
-    this.handles.slab.rightVerticalTop.position.set(vRight, this.yPos + handlePosOffset, zOffset + 0.01);
-    this.handles.slab.leftVerticalBottom.position.set(vLeft, this.yPos - handlePosOffset, zOffset + 0.01);
-    this.handles.slab.rightVerticalBottom.position.set(vRight, this.yPos - handlePosOffset, zOffset + 0.01);
-
+    // 更新手柄位置
+    const handlePosOffset = 0.2; // 调整手柄位置
+    this.handles.slab.topHorizontalLeft.position.set(xPos - handlePosOffset, hTop, zOffset + 0.01);
+    this.handles.slab.topHorizontalRight.position.set(xPos + handlePosOffset, hTop, zOffset + 0.01);
+    this.handles.slab.bottomHorizontalLeft.position.set(xPos - handlePosOffset, hBottom, zOffset + 0.01);
+    this.handles.slab.bottomHorizontalRight.position.set(xPos + handlePosOffset, hBottom, zOffset + 0.01);
+    this.handles.slab.leftVerticalTop.position.set(vLeft, yPos + handlePosOffset, zOffset + 0.01);
+    this.handles.slab.rightVerticalTop.position.set(vRight, yPos + handlePosOffset, zOffset + 0.01);
+    this.handles.slab.leftVerticalBottom.position.set(vLeft, yPos - handlePosOffset, zOffset + 0.01);
+    this.handles.slab.rightVerticalBottom.position.set(vRight, yPos - handlePosOffset, zOffset + 0.01);
     this.invalidate();
   }
   setupCrosshairs() {
@@ -522,23 +518,6 @@ class GpuRenderer {
     this.lines.hitbox.center = new THREE.Mesh(centerGeometry, centerMaterial);
     this.lines.hitbox.center.userData.type = 'center';
     this.hitboxGroup.add(this.lines.hitbox.center);
-
-    // --- 新增：创建旋转抓手 ---
-    const rotateHandleGeometry = new THREE.CircleGeometry(0.015, 16);
-    // 修正：为水平和垂直抓手创建独立的、颜色正确的材质
-    const rotateHandleMaterialH = new THREE.MeshBasicMaterial({ color: horizontalColor, transparent: true, opacity: 0.9 });
-    const rotateHandleMaterialV = new THREE.MeshBasicMaterial({ color: verticalColor, transparent: true, opacity: 0.9 });
-
-    this.handles.rotate.hStart = new THREE.Mesh(rotateHandleGeometry.clone(), rotateHandleMaterialH);
-    this.handles.rotate.hStart.userData.type = 'rotate_h';
-    this.handles.rotate.hEnd = new THREE.Mesh(rotateHandleGeometry.clone(), rotateHandleMaterialH);
-    this.handles.rotate.hEnd.userData.type = 'rotate_h';
-    this.handles.rotate.vStart = new THREE.Mesh(rotateHandleGeometry.clone(), rotateHandleMaterialV);
-    this.handles.rotate.vStart.userData.type = 'rotate_v';
-    this.handles.rotate.vEnd = new THREE.Mesh(rotateHandleGeometry.clone(), rotateHandleMaterialV);
-    this.handles.rotate.vEnd.userData.type = 'rotate_v';
-
-    this.hitboxGroup.add(this.handles.rotate.hStart, this.handles.rotate.hEnd, this.handles.rotate.vStart, this.handles.rotate.vEnd);
   }
   setupThicknessControls() {
     const { width, height } = this.container.getBoundingClientRect();
@@ -564,7 +543,7 @@ class GpuRenderer {
 
     // 厚度手柄大小
     const handleSize = 0.018;
-    const handleGeometry = new THREE.PlaneGeometry(handleSize + 0.001, handleSize);
+    const handleGeometry = new THREE.PlaneGeometry(handleSize + 0.002, handleSize);
 
     const slabHorizontalHandleMaterial = new THREE.MeshBasicMaterial({ color: this.crosshairsHorizontalLineMaterial.color, transparent: true, opacity: 0.7 });
     const slabVerticalHandleMaterial = new THREE.MeshBasicMaterial({ color: this.crosshairsVerticalLineMaterial.color, transparent: true, opacity: 0.7 });
@@ -620,29 +599,6 @@ class GpuRenderer {
     Object.values(this.lines.display.slab).forEach(line => (line.visible = false));
     Object.values(this.handles.slab).forEach(handle => (handle.visible = false));
   }
-  setupRotationControls() {
-    // 旋转圆形手柄大小
-    const handleSize = 0.012;
-    const handleGeometry = new THREE.CircleGeometry(handleSize, 16);
-
-    const rotationHorizontalHandleMaterial = new THREE.MeshBasicMaterial({ color: this.crosshairsHorizontalLineMaterial.color, transparent: true, opacity: 0.7 });
-    const rotationVerticalHandleMaterial = new THREE.MeshBasicMaterial({ color: this.crosshairsVerticalLineMaterial.color, transparent: true, opacity: 0.7 });
-
-    // MIP厚度手柄
-    this.handles.rotation.horizontalLeft = new THREE.Mesh(handleGeometry, rotationHorizontalHandleMaterial);
-    this.handles.rotation.horizontalLeft.userData.type = 'rotation_horizontal_handle';
-    this.handles.rotation.horizontalRight = new THREE.Mesh(handleGeometry, rotationHorizontalHandleMaterial);
-    this.handles.rotation.horizontalRight.userData.type = 'rotation_horizontal_handle';
-    this.handles.rotation.verticalTop = new THREE.Mesh(handleGeometry, rotationVerticalHandleMaterial);
-    this.handles.rotation.verticalTop.userData.type = 'rotation_vertical_handle';
-    this.handles.rotation.verticalBottom = new THREE.Mesh(handleGeometry, rotationVerticalHandleMaterial);
-    this.handles.rotation.verticalBottom.userData.type = 'rotation_vertical_handle';
-
-    // 将旋转圆形手柄添加到hitboxGroup中
-    this.hitboxGroup.add(this.handles.rotation.horizontalLeft, this.handles.rotation.horizontalRight, this.handles.rotation.verticalTop, this.handles.rotation.verticalBottom);
-
-    Object.values(this.handles.rotation).forEach(handle => (handle.visible = false));
-  }
   setupDragHandlers() {
     this.handleMouseDown = this.handleMouseDown.bind(this);
     this.handleMouseMove = this.handleMouseMove.bind(this);
@@ -671,30 +627,15 @@ class GpuRenderer {
     this.raycaster.setFromCamera(mouse, this.camera);
     const intersects = this.raycaster.intersectObjects(this.hitboxGroup.children, true);
 
-    console.log(
-      'mousedown intersects:',
-      intersects.length,
-      intersects.map(i => i.object.userData.type),
-    );
-
     if (intersects.length > 0) {
       this.isDragging = true;
       this.isUIDragging = false;
       this.dragTarget = intersects[0].object.userData.type;
 
-      console.log('dragTarget set to:', this.dragTarget);
-
       // 将屏幕坐标转换为世界坐标并存储
       const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
       this.raycaster.ray.intersectPlane(plane, this.dragStartPosition);
       this.dragStartViewState = { ...this.viewState }; // Store a copy of the state at drag start
-
-      // --- 新增：为旋转操作存储起始角度 ---
-      if (this.dragTarget.startsWith('rotate_')) {
-        const centerPoint = new THREE.Vector3(this.xPos, this.yPos, 0);
-        const startVector = new THREE.Vector3().subVectors(this.dragStartPosition, centerPoint);
-        this.dragStartAngle = Math.atan2(startVector.y, startVector.x);
-      }
     }
   }
   handleMouseMove(event) {
@@ -703,44 +644,25 @@ class GpuRenderer {
       this.raycaster.setFromCamera(mouse, this.camera);
       const intersects = this.raycaster.intersectObjects(this.hitboxGroup.children, true);
       Object.values(this.handles.slab).forEach(slabHandle => (slabHandle.visible = false));
-      Object.values(this.handles.rotation).forEach(rotationHandle => (rotationHandle.visible = false));
       this.dragTarget = null;
       if (intersects.length > 0) {
         this.dragTarget = intersects[0].object.userData.type;
         // console.log(this.dragTarget);
         // 根据悬停的对象类型，显示对应的手柄
-        if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'slab_horizontal_handle' || this.dragTarget === 'rotation_horizontal_handle') {
+        if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'slab_horizontal_handle') {
           // 悬停在十字线的水平部分，显示水平方向的厚度手柄
           this.handles.slab.topHorizontalLeft.visible = true;
           this.handles.slab.topHorizontalRight.visible = true;
           this.handles.slab.bottomHorizontalLeft.visible = true;
           this.handles.slab.bottomHorizontalRight.visible = true;
           this.canvas.style.cursor = 'row-resize';
-          if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'rotation_horizontal_handle') {
-            this.handles.rotation.horizontalLeft.visible = true;
-            this.handles.rotation.horizontalRight.visible = true;
-            this.handles.rotation.verticalTop.visible = true;
-            this.handles.rotation.verticalBottom.visible = true;
-            if (this.dragTarget === 'rotation_horizontal_handle') {
-              this.canvas.style.cursor = 'grab';
-            }
-          }
-        } else if (this.dragTarget === 'crosshairs_vertical_line' || this.dragTarget === 'slab_vertical_handle' || this.dragTarget === 'rotation_vertical_handle') {
+        } else if (this.dragTarget === 'crosshairs_vertical_line' || this.dragTarget === 'slab_vertical_handle') {
           // 悬停在十字线的垂直部分，显示垂直方向的厚度手柄
           this.handles.slab.leftVerticalTop.visible = true;
           this.handles.slab.leftVerticalBottom.visible = true;
           this.handles.slab.rightVerticalTop.visible = true;
           this.handles.slab.rightVerticalBottom.visible = true;
           this.canvas.style.cursor = 'col-resize';
-          if (this.dragTarget === 'crosshairs_vertical_line' || this.dragTarget === 'rotation_vertical_handle') {
-            this.handles.rotation.horizontalLeft.visible = true;
-            this.handles.rotation.horizontalRight.visible = true;
-            this.handles.rotation.verticalTop.visible = true;
-            this.handles.rotation.verticalBottom.visible = true;
-            if (this.dragTarget === 'rotation_vertical_handle') {
-              this.canvas.style.cursor = 'grab';
-            }
-          }
         } else if (this.dragTarget === 'slab_horizontal_line') {
           // 悬停在水平厚度辅助线，显示水平方向的厚度手柄
           this.handles.slab.topHorizontalLeft.visible = true;
@@ -748,7 +670,6 @@ class GpuRenderer {
           this.handles.slab.bottomHorizontalLeft.visible = true;
           this.handles.slab.bottomHorizontalRight.visible = true;
         } else if (this.dragTarget === 'slab_vertical_line') {
-          // ----------------------------------------------------------------
           // 悬停在垂直厚度辅助线，显示垂直方向的厚度手柄
           this.handles.slab.leftVerticalTop.visible = true;
           this.handles.slab.leftVerticalBottom.visible = true;
@@ -756,8 +677,6 @@ class GpuRenderer {
           this.handles.slab.rightVerticalBottom.visible = true;
         } else if (this.dragTarget === 'center') {
           this.canvas.style.cursor = 'all-scroll';
-        } else if (this.dragTarget.startsWith('rotate_')) {
-          this.canvas.style.cursor = 'pointer';
         } else {
           this.canvas.style.cursor = 'default';
         }
@@ -770,8 +689,6 @@ class GpuRenderer {
     // 拖拽逻辑保持不变
     if (!this.isDragging || !this.dragTarget) return;
 
-    console.log('dragging with target:', this.dragTarget);
-
     // 获取当前鼠标位置的世界坐标
     const normMouse = this.getNormalizedMousePosition(event);
     this.raycaster.setFromCamera(normMouse, this.camera);
@@ -781,25 +698,7 @@ class GpuRenderer {
 
     let changeHorizontal = null;
     let changeVertical = null;
-
-    if (this.dragTarget.startsWith('rotate_')) {
-      const centerPoint = new THREE.Vector3(this.xPos, this.yPos, 0);
-      const currentVector = new THREE.Vector3().subVectors(worldMouse, centerPoint);
-      const currentAngle = Math.atan2(currentVector.y, currentVector.x);
-      const deltaAngle = currentAngle - this.dragStartAngle;
-
-      // --- 修正：直接发送旋转事件，不包装在drag中 ---
-      this.onStateChange({
-        type: 'rotate',
-        orientation: this.orientation,
-        target: this.dragTarget, // 'rotate_h' or 'rotate_v'
-        deltaAngle: deltaAngle,
-      });
-
-      // 更新起始角度，为下一次mousemove做准备
-      this.dragStartAngle = currentAngle;
-      return; // 直接返回，不执行后续的drag逻辑
-    } else if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'center') {
+    if (this.dragTarget === 'crosshairs_horizontal_line' || this.dragTarget === 'center') {
       const totalDeltaWorldY = worldMouse.y - this.dragStartPosition.y;
       let target = '';
       let type = 'line';
@@ -818,7 +717,8 @@ class GpuRenderer {
         currentPosition = this.viewState.axialPosition;
       }
 
-      // 修正：反算时要考虑平面缩放
+      // 从世界坐标yPos反推切片位置: coronalPosition = (0.5 - yPos) * (height - 1)
+      // 因此 deltaCoronal = -deltaY * (sliceCount - 1)
       const positionChange = (-totalDeltaWorldY / this.slicePlane.scale.y) * (sliceCountForY - 1);
       const newPosition = startPosition + positionChange;
       const delta = newPosition - currentPosition;
@@ -842,7 +742,8 @@ class GpuRenderer {
         startPosition = this.dragStartViewState.coronalPosition;
         currentPosition = this.viewState.coronalPosition;
       }
-      // 修正：反算时要考虑平面缩放
+      // 从世界坐标xPos反推切片位置: sagittalPosition = (xPos + 0.5) * (width - 1)
+      // 因此 deltaSagittal = deltaX * (sliceCount - 1)
       const positionChange = (totalDeltaWorldX / this.slicePlane.scale.x) * (sliceCountForX - 1);
       const newPosition = startPosition + positionChange;
       const delta = newPosition - currentPosition;
@@ -882,14 +783,10 @@ class GpuRenderer {
       const delta = newThickness - currentThickness;
       changeVertical = { target, type, delta };
     }
-
-    // 只有非旋转事件才通过drag方式发送
-    if (changeHorizontal || changeVertical) {
-      this.onStateChange({
-        type: 'drag',
-        changes: [changeHorizontal, changeVertical].filter(Boolean),
-      });
-    }
+    this.onStateChange({
+      type: 'drag',
+      changes: [changeHorizontal, changeVertical].filter(Boolean),
+    });
   }
   handleMouseUp() {
     this.isDragging = false;

@@ -15,11 +15,15 @@ const SLICE_FRAGMENT_SHADER = `
   uniform float u_rescaleSlope;
   uniform float u_rescaleIntercept;
   uniform highp sampler3D u_texture;
-  uniform float u_sliceIndex;
-  uniform float u_sliceCount;
   uniform float u_slabThickness;
-  uniform vec3 u_volume_size;
+  uniform vec3 u_textureSize;
   uniform int u_slabMode; // 0: MaxIP, 1: MinIP, 2: AvgIP
+
+  // --- 新增：用于定义任意平面的Uniforms ---
+  uniform vec3 u_plane_origin; // 平面中心点在纹理坐标系中的位置 [0, 1]
+  uniform vec3 u_plane_xAxis;  // 平面X轴方向向量 (已乘以宽度比例)
+  uniform vec3 u_plane_yAxis;  // 平面Y轴方向向量 (已乘以高度比例)
+  uniform vec3 u_plane_normal; // 平面法向量 (用于MIP)
   
   varying vec2 v_texCoord;
 
@@ -35,34 +39,22 @@ const SLICE_FRAGMENT_SHADER = `
   }
 
   void main() {
-    float slice_coord = (u_sliceIndex + 0.5) / u_sliceCount;
+    // v_texCoord 是从模型顶点传入的UV坐标，范围从 (0,0) 到 (1,1).
+    // 我们将它映射到 [-0.5, 0.5] 的范围，这样可以计算出相对于平面中心点的位移.
+    vec3 displacement = (v_texCoord.x - 0.5) * u_plane_xAxis + (v_texCoord.y - 0.5) * u_plane_yAxis;
+    
+    // 最终的采样中心点坐标
+    vec3 center_texCoord = u_plane_origin + displacement;
 
     float rawValue;
 
     if (u_slabThickness < 1.0) {
-      
-      if (slice_coord < 0.0 || slice_coord > 1.0) {
+      // 检查纹理坐标是否在 [0, 1] 的有效范围内
+      if (any(lessThan(center_texCoord, vec3(0.0))) || any(greaterThan(center_texCoord, vec3(1.0)))) {
         out_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
       }
-      vec3 texCoord;
-      #if defined(CORONAL_VIEW)
-        // 冠状位视图 XZ 平面 slice_coord 为 y 轴 翻转Y为1-v_texCoord.y 所以是 v_texCoord.x, slice_coord, 1.0 - v_texCoord.y
-          texCoord = vec3(v_texCoord.x, slice_coord, 1.0 - v_texCoord.y);
-        //                    X            Y               Z
-        //                    .x           s              .y
-      #elif defined(SAGITTAL_VIEW)
-        // 矢状位视图 YZ 平面 slice_coord 为 x 轴 翻转Y为1-v_texCoord.y 所以是 slice_coord, v_texCoord.x, 1.0 - v_texCoord.y
-          texCoord = vec3(slice_coord, v_texCoord.x, 1.0 - v_texCoord.y);
-        //                    X            Y               Z
-        //                    s            .x             .y
-      #else
-        // 轴状位视图 XY 平面 slice_coord 为 z 轴 翻转Y为1-v_texCoord.y 所以是 v_texCoord.x, 1.0 - v_texCoord.y, slice_coord
-          texCoord = vec3(v_texCoord.x, 1.0 - v_texCoord.y, slice_coord);
-        //                    X            Y               Z
-        //                    .x           .y              s
-      #endif
-      rawValue = texture(u_texture, texCoord).r;
+      rawValue = texture(u_texture, center_texCoord).r;
     } else {
       float maxValue = -99999.0;
       float minValue = 99999.0;
@@ -70,25 +62,14 @@ const SLICE_FRAGMENT_SHADER = `
       int sampleCount = 0;
       int thickness = int(u_slabThickness) / 2;
       
+      // 沿着法线方向，计算一个体素单位的步进向量
+      vec3 step_vec = u_plane_normal / u_textureSize;
+
       for (int i = -thickness; i <= thickness; i++) {
-        vec3 sample_coord;
-        float current_slice_offset = 0.0;
+        vec3 sample_coord = center_texCoord + float(i) * step_vec;
 
-        #if defined(CORONAL_VIEW)
-          float step = 1.0 / u_volume_size.y;
-          current_slice_offset = slice_coord + float(i) * step;
-          sample_coord = vec3(v_texCoord.x, current_slice_offset, 1.0 - v_texCoord.y);
-        #elif defined(SAGITTAL_VIEW)
-          float step = 1.0 / u_volume_size.x;
-          current_slice_offset = slice_coord + float(i) * step;
-          sample_coord = vec3(current_slice_offset, v_texCoord.x, 1.0 - v_texCoord.y);
-        #else
-          float step = 1.0 / u_volume_size.z;
-          current_slice_offset = slice_coord + float(i) * step;
-          sample_coord = vec3(v_texCoord.x, 1.0 - v_texCoord.y, current_slice_offset);
-        #endif
-
-        if (current_slice_offset >= 0.0 && current_slice_offset <= 1.0) {
+        // 只对有效范围内的体素进行采样
+        if (all(greaterThanEqual(sample_coord, vec3(0.0))) && all(lessThanEqual(sample_coord, vec3(1.0)))) {
           float sampledValue = texture(u_texture, sample_coord).r;
           maxValue = max(maxValue, sampledValue);
           minValue = min(minValue, sampledValue);
